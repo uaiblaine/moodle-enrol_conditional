@@ -17,10 +17,14 @@
 namespace enrol_conditional\privacy;
 
 /**
- * Privacy provider: this plugin stores no personal data.
+ * Privacy provider: this plugin has no store of personal data of its own.
  *
- * The records of the actions taken when the conditions of an enrolment stopped being met are stored, and
- * covered, by local_enrolconditions. Enrolments are stored by core.
+ * What it writes is covered elsewhere: user enrolments by core_enrol; role assignments by core_role, made
+ * without a component because roles_protected() is false; group memberships by core_group, because they are
+ * added without a component; expiry notifications by core_message. The suspension records and the user lists
+ * that some conditions keep in the instance settings belong to local_enrolconditions and its condition types.
+ * Writing either row with this component (roles_protected() true, or a component passed to groups_add_member()
+ * in {@see \enrol_conditional_plugin::enrol_conditional()}) would make it this plugin's to cover.
  *
  * @package    enrol_conditional
  * @copyright  2026 Kelson Medeiros <kelsoncm@gmail.com>

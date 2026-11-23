@@ -21,12 +21,11 @@ namespace enrol_conditional\form;
 use core\context\course as context_course;
 use core\context\system as context_system;
 use core_form\dynamic_form;
-use core_text;
-use html_writer;
+use enrol_conditional\local\enrolment_key;
 use moodle_url;
 
 /**
- * Form for entering password for self enrolment
+ * Form for entering the enrolment key, shown in a modal on the enrol page.
  *
  * @package    enrol_conditional
  * @copyright  Marina Glancy
@@ -92,18 +91,20 @@ class enrol_form extends dynamic_form {
             if ($keyholdercount === 1) {
                 $mform->addElement('static', 'keyholder', '', get_string('keyholder', 'enrol_conditional'));
             }
+            $profileurl = null;
             if (
                 $USER->id == $keyholder->id
                     || has_capability('moodle/user:viewdetails', context_system::instance())
                     || has_coursecontact_role($keyholder->id)
             ) {
                 $profileurl = new moodle_url('/user/profile.php', ['id' => $keyholder->id, 'course' => $this->instance->courseid]);
-                $profilelink = html_writer::link($profileurl, fullname($keyholder));
-            } else {
-                $profilelink = fullname($keyholder);
             }
-            $profilepic = $OUTPUT->user_picture($keyholder, ['size' => 35, 'courseid' => $this->instance->courseid]);
-            $mform->addElement('static', 'keyholder' . $keyholdercount, '', $profilepic . $profilelink);
+            $html = $OUTPUT->render_from_template('enrol_conditional/keyholder', [
+                'picture' => $OUTPUT->user_picture($keyholder, ['size' => 35, 'courseid' => $this->instance->courseid]),
+                'fullname' => fullname($keyholder),
+                'profileurl' => $profileurl ? $profileurl->out(false) : null,
+            ]);
+            $mform->addElement('static', 'keyholder' . $keyholdercount, '', $html);
         }
 
         $mform->addElement('hidden', 'id');
@@ -115,29 +116,12 @@ class enrol_form extends dynamic_form {
 
     #[\Override]
     public function validation($data, $files) {
-        global $DB, $CFG;
-        require_once($CFG->dirroot . '/enrol/conditional/locallib.php');
-
         $errors = parent::validation($data, $files);
         $instance = $this->get_instance();
-        if ($data['enrolpassword'] !== $instance->password) {
-            if ($instance->customint1) {
-                // Check group enrolment key.
-                if (!enrol_conditional_check_group_enrolment_key($instance->courseid, $data['enrolpassword'])) {
-                    // We can not hint because there are probably multiple passwords.
-                    $errors['enrolpassword'] = get_string('passwordinvalid', 'enrol_conditional');
-                }
-            } else {
-                $plugin = enrol_get_plugin('conditional');
-                if ($plugin->get_config('showhint')) {
-                    $hint = core_text::substr($instance->password, 0, 1);
-                    $errors['enrolpassword'] = get_string('passwordinvalidhint', 'enrol_conditional', $hint);
-                } else {
-                    $errors['enrolpassword'] = get_string('passwordinvalid', 'enrol_conditional');
-                }
-            }
+        $check = enrolment_key::check($instance, (string) ($data['enrolpassword'] ?? ''));
+        if ($check !== enrolment_key::ACCEPTED) {
+            $errors['enrolpassword'] = enrolment_key::refusal_message($instance, $check);
         }
-
         return $errors;
     }
 

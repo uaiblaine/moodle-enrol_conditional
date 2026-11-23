@@ -60,13 +60,12 @@ final class backup_restore_test extends \advanced_testcase {
     }
 
     /**
-     * Backs up a course with users and restores it as a new course.
+     * Backs up a course with users.
      *
      * @param int $courseid
-     * @param bool $othersite Whether to simulate a backup from another site.
-     * @return int Id of the new course.
+     * @return string Id of the extracted backup, for restore_controller.
      */
-    protected function backup_and_restore(int $courseid, bool $othersite = false): int {
+    protected function backup(int $courseid): string {
         global $CFG, $USER;
         $bc = new \backup_controller(
             \backup::TYPE_1COURSE,
@@ -82,22 +81,45 @@ final class backup_restore_test extends \advanced_testcase {
         $backupid = 'test-' . $courseid . '-' . random_string(6);
         $file->extract_to_pathname(get_file_packer('application/vnd.moodle.backup'), $CFG->tempdir . '/backup/' . $backupid);
         $bc->destroy();
+        return $backupid;
+    }
 
-        if ($othersite) {
-            set_config('siteidentifier', random_string(32) . 'other');
-        }
-        $newcourseid = \restore_dbops::create_new_course('Restored', 'R' . random_string(4), 1);
+    /**
+     * Restores a backup into a course.
+     *
+     * @param string $backupid
+     * @param int $courseid Target course.
+     * @param int $target One of the backup::TARGET_ constants.
+     */
+    protected function restore(string $backupid, int $courseid, int $target): void {
+        global $USER;
         $rc = new \restore_controller(
             $backupid,
-            $newcourseid,
+            $courseid,
             \backup::INTERACTIVE_NO,
             \backup::MODE_GENERAL,
             $USER->id,
-            \backup::TARGET_NEW_COURSE
+            $target
         );
         $this->assertTrue($rc->execute_precheck());
         $rc->execute_plan();
         $rc->destroy();
+    }
+
+    /**
+     * Backs up a course with users and restores it as a new course.
+     *
+     * @param int $courseid
+     * @param bool $othersite Whether to simulate a backup from another site.
+     * @return int Id of the new course.
+     */
+    protected function backup_and_restore(int $courseid, bool $othersite = false): int {
+        $backupid = $this->backup($courseid);
+        if ($othersite) {
+            set_config('siteidentifier', random_string(32) . 'other');
+        }
+        $newcourseid = \restore_dbops::create_new_course('Restored', 'R' . random_string(4), 1);
+        $this->restore($backupid, $newcourseid, \backup::TARGET_NEW_COURSE);
         return $newcourseid;
     }
 
@@ -174,10 +196,17 @@ final class backup_restore_test extends \advanced_testcase {
         ]]);
         $this->plugin->add_instance($course, ['status' => ENROL_INSTANCE_ENABLED, 'customtext2' => $tree]);
 
-        $newcourseid = $this->backup_and_restore((int) $course->id, true);
+        // From the same site the file comes back with the course and the list is met.
+        $newcourseid = $this->backup_and_restore((int) $course->id);
         $restored = $DB->get_record('enrol', ['courseid' => $newcourseid, 'enrol' => 'conditional'], '*', MUST_EXIST);
         $result = $this->plugin->evaluate_conditions($restored, (int) $user->id);
         $this->assertTrue($result->is_met());
+
+        // Control: from another site the list names other people, so the condition comes back without its file
+        // and nobody meets it.
+        $othercourseid = $this->backup_and_restore((int) $course->id, true);
+        $other = $DB->get_record('enrol', ['courseid' => $othercourseid, 'enrol' => 'conditional'], '*', MUST_EXIST);
+        $this->assertFalse($this->plugin->evaluate_conditions($other, (int) $user->id)->is_met());
     }
 
     public function test_other_site(): void {
@@ -228,13 +257,112 @@ final class backup_restore_test extends \advanced_testcase {
         $this->assertSame(0, $DB->count_records(enforcer::TABLE, ['instanceid' => $restored->id]));
     }
 
-    public function test_invalid_tree_is_kept(): void {
+    public function test_invalid_tree_is_kept_and_fails_closed(): void {
         global $DB;
         [$course, $instance] = $this->create_course();
         $DB->set_field('enrol', 'customtext2', '{"op":"xor"}', ['id' => $instance->id]);
+        $DB->set_field('enrol', 'customint6', 1, ['id' => $instance->id]);
 
         $newcourseid = $this->backup_and_restore((int) $course->id);
         $restored = $DB->get_record('enrol', ['courseid' => $newcourseid, 'enrol' => 'conditional'], '*', MUST_EXIST);
         $this->assertSame('{"op":"xor"}', $restored->customtext2);
+
+        // The invalid tree evaluates to unknown: the enrol page refuses and so does the enrolment itself.
+        $user = $this->getDataGenerator()->create_user();
+        $this->setUser($user);
+        $status = $this->plugin->can_self_enrol($restored);
+        $this->assertDebuggingCalled();
+        $this->assertIsString($status);
+        $this->assertStringContainsString(get_string('failureunknown', 'local_enrolconditions'), $status);
+        try {
+            $this->plugin->enrol_conditional($restored, (object) []);
+            $this->fail('The enrolment must be refused.');
+        } catch (\moodle_exception $e) {
+            $this->assertDebuggingCalled();
+            $this->assertSame('conditionsnotmetshort', $e->errorcode);
+        }
+        $this->assertFalse($DB->record_exists('user_enrolments', ['enrolid' => $restored->id, 'userid' => $user->id]));
+
+        // Control: the same restored instance with a valid tree enrols the user.
+        $DB->set_field('enrol', 'customtext2', null, ['id' => $restored->id]);
+        $restored = $DB->get_record('enrol', ['id' => $restored->id], '*', MUST_EXIST);
+        $this->assertTrue($this->plugin->can_self_enrol($restored));
+        $this->plugin->enrol_conditional($restored, (object) []);
+        $this->assertTrue($DB->record_exists('user_enrolments', ['enrolid' => $restored->id, 'userid' => $user->id]));
+    }
+
+    public function test_other_site_restores_no_state(): void {
+        global $DB;
+        [$course, , $suspended] = $this->create_course();
+
+        $newcourseid = $this->backup_and_restore((int) $course->id, true);
+        $restored = $DB->get_record('enrol', ['courseid' => $newcourseid, 'enrol' => 'conditional'], '*', MUST_EXIST);
+
+        // The restore created the suspended enrolment, but the suspension was decided on another site.
+        $ue = $DB->get_record('user_enrolments', ['enrolid' => $restored->id, 'userid' => $suspended->id], '*', MUST_EXIST);
+        $this->assertEquals(ENROL_USER_SUSPENDED, $ue->status);
+        $this->assertSame(0, $DB->count_records(enforcer::TABLE, ['instanceid' => $restored->id]));
+    }
+
+    public function test_merge_into_existing_course_keeps_hand_suspension(): void {
+        global $DB;
+        [$course, $instance, $suspended] = $this->create_course();
+        $backupid = $this->backup((int) $course->id);
+
+        // A course whose instance the restore merges into (same status and role), where a teacher suspended the
+        // same user by hand, and whose conditions the user meets, so an owned suspension would be reactivated.
+        $target = $this->getDataGenerator()->create_course();
+        $id = $this->plugin->add_instance($target, [
+            'status' => $instance->status,
+            'roleid' => $instance->roleid,
+            'customtext2' => json_encode(['op' => 'and', 'children' => [
+                ['type' => 'fake', 'config' => ['userids' => [(int) $suspended->id]]],
+            ]]),
+            'conditionaction' => enrol_conditional_plugin::ACTION_SUSPEND,
+            'conditionreactivate' => 1,
+        ]);
+        $targetinstance = $DB->get_record('enrol', ['id' => $id], '*', MUST_EXIST);
+        $this->plugin->enrol_user($targetinstance, $suspended->id);
+        $this->plugin->update_user_enrol($targetinstance, $suspended->id, ENROL_USER_SUSPENDED);
+
+        $this->restore($backupid, (int) $target->id, \backup::TARGET_EXISTING_ADDING);
+
+        $this->assertSame(1, $DB->count_records('enrol', ['courseid' => $target->id, 'enrol' => 'conditional']));
+        $ue = $DB->get_record('user_enrolments', ['enrolid' => $targetinstance->id, 'userid' => $suspended->id], '*', MUST_EXIST);
+        $this->assertEquals(ENROL_USER_SUSPENDED, $ue->status);
+        $this->assertSame(0, $DB->count_records(enforcer::TABLE, ['instanceid' => $targetinstance->id]));
+
+        $outcome = (new enforcer())->check_user($targetinstance, (int) $suspended->id);
+        $this->assertSame(enforcer::OUTCOME_NOTHING, $outcome);
+        $this->assertEquals(
+            ENROL_USER_SUSPENDED,
+            $DB->get_field('user_enrolments', 'status', ['id' => $ue->id])
+        );
+    }
+
+    public function test_merge_restores_state_of_enrolment_it_created(): void {
+        global $DB;
+        [$course, $instance, $suspended] = $this->create_course();
+        $backupid = $this->backup((int) $course->id);
+
+        // Control of the test above: the same merge, without the user in the target, creates the enrolment and
+        // keeps the ownership of its suspension.
+        $target = $this->getDataGenerator()->create_course();
+        $id = $this->plugin->add_instance($target, [
+            'status' => $instance->status,
+            'roleid' => $instance->roleid,
+            'customtext2' => json_encode(['op' => 'and', 'children' => [
+                ['type' => 'fake', 'config' => ['userids' => [(int) $suspended->id]]],
+            ]]),
+            'conditionaction' => enrol_conditional_plugin::ACTION_SUSPEND,
+            'conditionreactivate' => 1,
+        ]);
+        $targetinstance = $DB->get_record('enrol', ['id' => $id], '*', MUST_EXIST);
+
+        $this->restore($backupid, (int) $target->id, \backup::TARGET_EXISTING_ADDING);
+
+        $this->assertSame(1, $DB->count_records(enforcer::TABLE, ['instanceid' => $targetinstance->id]));
+        $outcome = (new enforcer())->check_user($targetinstance, (int) $suspended->id);
+        $this->assertSame(enforcer::OUTCOME_REACTIVATED, $outcome);
     }
 }

@@ -14,27 +14,20 @@
 // You should have received a copy of the GNU General Public License
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
-namespace enrol_conditional;
+namespace enrol_conditional\external;
 
 use core_external\external_api;
-use enrol_conditional_external;
-
-defined('MOODLE_INTERNAL') || die();
-
-global $CFG;
-
-require_once($CFG->dirroot . '/enrol/conditional/externallib.php');
 
 /**
- * Self enrol external PHPunit tests
+ * The web service scenarios inherited from core's enrol_self, called through the web service layer.
  *
  * @package   enrol_conditional
  * @copyright 2013 Rajesh Taneja <rajesh@moodle.com>
  * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
- * @since     Moodle 2.6
  */
-#[\PHPUnit\Framework\Attributes\CoversClass(\enrol_conditional_external::class)]
-final class externallib_test extends \core_external\tests\externallib_testcase {
+#[\PHPUnit\Framework\Attributes\CoversClass(get_instance_info::class)]
+#[\PHPUnit\Framework\Attributes\CoversClass(enrol_user::class)]
+final class upstream_scenarios_test extends \advanced_testcase {
     /**
      * Enables the plugin and default instances, which a new site does not have for this plugin.
      */
@@ -43,6 +36,23 @@ final class externallib_test extends \core_external\tests\externallib_testcase {
         $this->resetAfterTest();
         \core\plugininfo\enrol::enable_plugin('conditional', true);
         set_config('defaultenrol', 1, 'enrol_conditional');
+    }
+
+    /**
+     * Calls a function as a client does and returns its cleaned answer.
+     *
+     * @param string $function Function name.
+     * @param array $args
+     * @return array
+     * @throws \moodle_exception With the error code of the answer when the call failed.
+     */
+    private function call(string $function, array $args): array {
+        $_POST['sesskey'] = sesskey();
+        $response = external_api::call_external_function($function, $args);
+        if ($response['error']) {
+            throw new \moodle_exception($response['exception']->errorcode);
+        }
+        return $response['data'];
     }
     /**
      * Test get_instance_info
@@ -83,8 +93,7 @@ final class externallib_test extends \core_external\tests\externallib_testcase {
         $this->assertCount(3, $enrolmentmethods);
 
         $this->setAdminUser();
-        $instanceinfo1 = enrol_conditional_external::get_instance_info($instanceid1);
-        $instanceinfo1 = external_api::clean_returnvalue(enrol_conditional_external::get_instance_info_returns(), $instanceinfo1);
+        $instanceinfo1 = $this->call('enrol_conditional_get_instance_info', ['instanceid' => $instanceid1]);
 
         $this->assertEquals($instanceid1, $instanceinfo1['id']);
         $this->assertEquals($course->id, $instanceinfo1['courseid']);
@@ -93,8 +102,7 @@ final class externallib_test extends \core_external\tests\externallib_testcase {
         $this->assertTrue($instanceinfo1['status']);
         $this->assertFalse(isset($instanceinfo1['enrolpassword']));
 
-        $instanceinfo2 = enrol_conditional_external::get_instance_info($instanceid2);
-        $instanceinfo2 = external_api::clean_returnvalue(enrol_conditional_external::get_instance_info_returns(), $instanceinfo2);
+        $instanceinfo2 = $this->call('enrol_conditional_get_instance_info', ['instanceid' => $instanceid2]);
         $this->assertEquals($instanceid2, $instanceinfo2['id']);
         $this->assertEquals($course->id, $instanceinfo2['courseid']);
         $this->assertEquals('conditional', $instanceinfo2['type']);
@@ -102,8 +110,7 @@ final class externallib_test extends \core_external\tests\externallib_testcase {
         $this->assertEquals(get_string('canntenrol', 'enrol_conditional'), $instanceinfo2['status']);
         $this->assertFalse(isset($instanceinfo2['enrolpassword']));
 
-        $instanceinfo3 = enrol_conditional_external::get_instance_info($instanceid3);
-        $instanceinfo3 = external_api::clean_returnvalue(enrol_conditional_external::get_instance_info_returns(), $instanceinfo3);
+        $instanceinfo3 = $this->call('enrol_conditional_get_instance_info', ['instanceid' => $instanceid3]);
         $this->assertEquals($instanceid3, $instanceinfo3['id']);
         $this->assertEquals($course->id, $instanceinfo3['courseid']);
         $this->assertEquals('conditional', $instanceinfo3['type']);
@@ -115,7 +122,8 @@ final class externallib_test extends \core_external\tests\externallib_testcase {
         $user = self::getDataGenerator()->create_user();
         $this->setUser($user);
         try {
-            enrol_conditional_external::get_instance_info($instanceid3);
+            $this->call('enrol_conditional_get_instance_info', ['instanceid' => $instanceid3]);
+            $this->fail('A hidden course must be refused.');
         } catch (\moodle_exception $e) {
             $this->assertEquals('coursehidden', $e->errorcode);
         }
@@ -158,8 +166,7 @@ final class externallib_test extends \core_external\tests\externallib_testcase {
         self::setUser($user1);
 
         // Self enrol me.
-        $result = enrol_conditional_external::enrol_user($course1->id);
-        $result = external_api::clean_returnvalue(enrol_conditional_external::enrol_user_returns(), $result);
+        $result = $this->call('enrol_conditional_enrol_user', ['courseid' => $course1->id]);
 
         self::assertTrue($result['status']);
         self::assertEquals(1, $DB->count_records('user_enrolments', ['enrolid' => $instance1->id]));
@@ -171,7 +178,8 @@ final class externallib_test extends \core_external\tests\externallib_testcase {
 
         // Try instance not enabled.
         try {
-            enrol_conditional_external::enrol_user($course2->id);
+            $this->call('enrol_conditional_enrol_user', ['courseid' => $course2->id]);
+            $this->fail('A course without an enabled instance must be refused.');
         } catch (\moodle_exception $e) {
             self::assertEquals('canntenrol', $e->errorcode);
         }
@@ -180,30 +188,26 @@ final class externallib_test extends \core_external\tests\externallib_testcase {
         $selfplugin->update_status($instance2, ENROL_INSTANCE_ENABLED);
 
         // Try not passing a key.
-        $result = enrol_conditional_external::enrol_user($course2->id);
-        $result = external_api::clean_returnvalue(enrol_conditional_external::enrol_user_returns(), $result);
+        $result = $this->call('enrol_conditional_enrol_user', ['courseid' => $course2->id]);
         self::assertFalse($result['status']);
         self::assertCount(1, $result['warnings']);
         self::assertEquals('4', $result['warnings'][0]['warningcode']);
 
         // Try passing an invalid key.
-        $result = enrol_conditional_external::enrol_user($course2->id, 'invalidkey');
-        $result = external_api::clean_returnvalue(enrol_conditional_external::enrol_user_returns(), $result);
+        $result = $this->call('enrol_conditional_enrol_user', ['courseid' => $course2->id, 'password' => 'invalidkey']);
         self::assertFalse($result['status']);
         self::assertCount(1, $result['warnings']);
         self::assertEquals('4', $result['warnings'][0]['warningcode']);
 
         // Try passing an invalid key with hint.
         $selfplugin->set_config('showhint', true);
-        $result = enrol_conditional_external::enrol_user($course2->id, 'invalidkey');
-        $result = external_api::clean_returnvalue(enrol_conditional_external::enrol_user_returns(), $result);
+        $result = $this->call('enrol_conditional_enrol_user', ['courseid' => $course2->id, 'password' => 'invalidkey']);
         self::assertFalse($result['status']);
         self::assertCount(1, $result['warnings']);
         self::assertEquals('3', $result['warnings'][0]['warningcode']);
 
         // Everything correct, now.
-        $result = enrol_conditional_external::enrol_user($course2->id, 'abcdef');
-        $result = external_api::clean_returnvalue(enrol_conditional_external::enrol_user_returns(), $result);
+        $result = $this->call('enrol_conditional_enrol_user', ['courseid' => $course2->id, 'password' => 'abcdef']);
 
         self::assertTrue($result['status']);
         self::assertEquals(1, $DB->count_records('user_enrolments', ['enrolid' => $instance2->id]));
@@ -219,15 +223,13 @@ final class externallib_test extends \core_external\tests\externallib_testcase {
 
         self::setUser($user2);
         // Try passing and invalid key for group.
-        $result = enrol_conditional_external::enrol_user($course2->id, 'invalidkey');
-        $result = external_api::clean_returnvalue(enrol_conditional_external::enrol_user_returns(), $result);
+        $result = $this->call('enrol_conditional_enrol_user', ['courseid' => $course2->id, 'password' => 'invalidkey']);
         self::assertFalse($result['status']);
         self::assertCount(1, $result['warnings']);
         self::assertEquals('2', $result['warnings'][0]['warningcode']);
 
         // Now, everything ok.
-        $result = enrol_conditional_external::enrol_user($course2->id, 'zyx');
-        $result = external_api::clean_returnvalue(enrol_conditional_external::enrol_user_returns(), $result);
+        $result = $this->call('enrol_conditional_enrol_user', ['courseid' => $course2->id, 'password' => 'zyx']);
 
         self::assertTrue($result['status']);
         self::assertEquals(2, $DB->count_records('user_enrolments', ['enrolid' => $instance2->id]));
@@ -243,23 +245,23 @@ final class externallib_test extends \core_external\tests\externallib_testcase {
         $DB->update_record('enrol', $instance3);
 
         self::setUser($user3);
-        $result = enrol_conditional_external::enrol_user($course2->id, 'invalidkey');
-        $result = external_api::clean_returnvalue(enrol_conditional_external::enrol_user_returns(), $result);
+        $result = $this->call('enrol_conditional_enrol_user', ['courseid' => $course2->id, 'password' => 'invalidkey']);
         self::assertFalse($result['status']);
         self::assertCount(2, $result['warnings']);
 
         // Now, everything ok.
-        $result = enrol_conditional_external::enrol_user($course2->id, 'zyx');
-        $result = external_api::clean_returnvalue(enrol_conditional_external::enrol_user_returns(), $result);
+        $result = $this->call('enrol_conditional_enrol_user', ['courseid' => $course2->id, 'password' => 'zyx']);
         self::assertTrue($result['status']);
         self::assertTrue(is_enrolled($context2, $user3));
 
         // Now test passing an instance id.
         self::setUser($user4);
-        $result = enrol_conditional_external::enrol_user($course2->id, 'abcdef', $instance3id);
-        $result = external_api::clean_returnvalue(enrol_conditional_external::enrol_user_returns(), $result);
+        $result = $this->call(
+            'enrol_conditional_enrol_user',
+            ['courseid' => $course2->id, 'password' => 'abcdef', 'instanceid' => $instance3id]
+        );
         self::assertTrue($result['status']);
-        self::assertTrue(is_enrolled($context2, $user3));
+        self::assertTrue(is_enrolled($context2, $user4));
         self::assertCount(0, $result['warnings']);
         self::assertEquals(1, $DB->count_records('user_enrolments', ['enrolid' => $instance3->id]));
     }

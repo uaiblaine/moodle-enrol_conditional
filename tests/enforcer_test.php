@@ -101,8 +101,9 @@ final class enforcer_test extends \advanced_testcase {
      * @return string
      */
     protected function tree(array $allowed): string {
+        // The fake condition refuses an empty list as invalid; user id 0 keeps it valid and met by nobody.
         return json_encode(['op' => 'and', 'children' => [
-            ['type' => 'fake', 'config' => ['userids' => array_map('intval', $allowed)]],
+            ['type' => 'fake', 'config' => ['userids' => array_map('intval', $allowed ?: [0])]],
         ]]);
     }
 

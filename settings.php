@@ -15,7 +15,7 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Self enrolment plugin settings and presets.
+ * Settings of the conditional self enrolment plugin and the defaults of new instances.
  *
  * @package    enrol_conditional
  * @copyright  2010 Petr Skoda  {@link http://skodak.org}
@@ -49,8 +49,8 @@ if ($ADMIN->fulltree) {
         0
     ));
 
-    // Note: let's reuse the ext sync constants and strings here, internally it is very similar,
-    // it describes what should happend when users are not supposed to be enerolled any more.
+    // What happens when an enrolment expires: the constants and strings of core's external enrolment sync,
+    // which describe the same choice for users who are no longer supposed to be enrolled.
     $options = [
         ENROL_EXT_REMOVED_KEEP           => get_string('extremovedkeep', 'enrol'),
         ENROL_EXT_REMOVED_SUSPENDNOROLES => get_string('extremovedsuspendnoroles', 'enrol'),
@@ -59,7 +59,7 @@ if ($ADMIN->fulltree) {
     $settings->add(new admin_setting_configselect(
         'enrol_conditional/expiredaction',
         get_string('expiredaction', 'enrol_conditional'),
-        get_string('expiredaction_help', 'enrol_conditional'),
+        get_string('expiredaction_desc', 'enrol_conditional'),
         ENROL_EXT_REMOVED_KEEP,
         $options
     ));
@@ -128,14 +128,26 @@ if ($ADMIN->fulltree) {
         1
     ));
 
-    foreach (['checkmodelogin', 'checkmodeperiodic', 'checkmodeevents'] as $checkmode) {
-        $settings->add(new admin_setting_configcheckbox(
-            'enrol_conditional/' . $checkmode,
-            get_string($checkmode, 'enrol_conditional'),
-            get_string($checkmode . '_desc', 'enrol_conditional'),
-            0
-        ));
-    }
+    $settings->add(new admin_setting_configcheckbox(
+        'enrol_conditional/checkmodelogin',
+        get_string('checkmodelogin', 'enrol_conditional'),
+        get_string('checkmodelogin_desc', 'enrol_conditional'),
+        0
+    ));
+
+    $settings->add(new admin_setting_configcheckbox(
+        'enrol_conditional/checkmodeperiodic',
+        get_string('checkmodeperiodic', 'enrol_conditional'),
+        get_string('checkmodeperiodic_desc', 'enrol_conditional'),
+        0
+    ));
+
+    $settings->add(new admin_setting_configcheckbox(
+        'enrol_conditional/checkmodeevents',
+        get_string('checkmodeevents', 'enrol_conditional'),
+        get_string('checkmodeevents_desc', 'enrol_conditional'),
+        0
+    ));
 
     $options = [1  => get_string('yes'),
                      0 => get_string('no')];
@@ -202,7 +214,7 @@ if ($ADMIN->fulltree) {
     $settings->add(new admin_setting_configselect(
         'enrol_conditional/longtimenosee',
         get_string('longtimenosee', 'enrol_conditional'),
-        get_string('longtimenosee_help', 'enrol_conditional'),
+        get_string('longtimenosee_desc', 'enrol_conditional'),
         0,
         $options
     ));
@@ -210,7 +222,7 @@ if ($ADMIN->fulltree) {
     $settings->add(new admin_setting_configtext(
         'enrol_conditional/maxenrolled',
         get_string('maxenrolled', 'enrol_conditional'),
-        get_string('maxenrolled_help', 'enrol_conditional'),
+        get_string('maxenrolled_desc', 'enrol_conditional'),
         0,
         PARAM_INT
     ));
@@ -218,7 +230,7 @@ if ($ADMIN->fulltree) {
     $settings->add(new admin_setting_configselect(
         'enrol_conditional/sendcoursewelcomemessage',
         get_string('sendcoursewelcomemessage', 'enrol_conditional'),
-        get_string('sendcoursewelcomemessage_help', 'enrol_conditional'),
+        get_string('sendcoursewelcomemessage_desc', 'enrol_conditional'),
         ENROL_SEND_EMAIL_FROM_COURSE_CONTACT,
         enrol_send_welcome_email_options()
     ));
