@@ -1,0 +1,2 @@
+# G6: enrol_user gives no warning for an instance that refuses the user (conditions, guest, closed instance).
+s#\n            \$status = \$plugin->can_self_enrol\(\$instance\);\n            if \(\$status !== true\) \{\n                \$warnings\[\] = self::warning\(\$instance, 1, html_to_text\(\(string\) \$status, 0, false\)\);\n                continue;\n            \}\n#\n# or die "g6: pattern did not match\n";

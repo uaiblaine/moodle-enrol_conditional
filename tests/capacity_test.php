@@ -125,17 +125,25 @@ final class capacity_test extends \advanced_testcase {
         $this->assertFalse($this->enrolled($instance, (int) $user->id));
     }
 
-    public function test_without_limit_no_lock_is_taken(): void {
+    public function test_without_limit_a_refused_lock_enrols_nobody(): void {
         global $CFG;
-        // Control of the test above: the same refusing factory, on an instance without a limit, enrols.
         $instance = $this->create_instance(0);
         $user = $this->getDataGenerator()->create_user();
         $this->setUser($user);
         require_once(__DIR__ . '/fixtures/refusing_lock_factory.php');
         $CFG->lock_factory = '\\enrol_conditional\\refusing_lock_factory';
 
-        $this->plugin->enrol_conditional($instance, (object) []);
+        try {
+            $this->plugin->enrol_conditional($instance, (object) []);
+            $this->fail('The enrolment must be refused.');
+        } catch (\moodle_exception $e) {
+            $this->assertSame('capacitybusy', $e->errorcode);
+        }
+        $this->assertFalse($this->enrolled($instance, (int) $user->id));
 
+        // Control: the same request with a lock that is granted enrols.
+        unset($CFG->lock_factory);
+        $this->plugin->enrol_conditional($instance, (object) []);
         $this->assertTrue($this->enrolled($instance, (int) $user->id));
     }
 }

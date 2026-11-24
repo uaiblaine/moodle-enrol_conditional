@@ -2,6 +2,27 @@
 
 All notable changes to the Conditional self enrolment plugin will be documented in this file.
 
+## 1.1.1+uai.2 - 2026-11-23
+
+### Security
+- The method implements `\local_enrolconditions\tree_writer`, so a privacy request erases a username from the lists of its instances. It is the one writer of the tree that does not validate, because the caller is the privacy system; it refuses a row that is not an instance of this method.
+- The course upload refuses an enrolment key longer than 50 characters.
+
+### Changed
+- One definition of "needs a key" (`enrolment_key::is_required()`): an instance whose key is `0` now shows the key form, the key icon and the key field in the app information.
+- Requires `local_enrolconditions` 1.2.0+uai.2 (2026112301).
+
+### Fixed
+- Restoring an old backup whose stored tree does not parse keeps the cohort restriction: the tree becomes the cohort condition alone, `customint5` is cleared only once the restriction is in the tree, and the upgrade step 2026110902 now applies the same rule (`cohort_restriction::add_to_tree()`).
+- A key of `0` is a key in the password policy and group-key collision checks of the instance form, when enabling an instance, and in the course upload (`enrolment_key::is_key()`).
+- Without a limit, the enrolment is decided under a core lock of the instance and the user (`capacitybusy` when it is refused), so two simultaneous requests of one user cannot restart the enrolment period.
+- Restoring a backup taken before the cohort restriction became a condition keeps the restriction: `customint5` becomes a cohort condition in the restored tree; restored from another site, it matches nobody.
+- A second request of an already enrolled user no longer restarts the enrolment period: the check is repeated right before the write, under the capacity lock when there is a limit.
+- When the group of a group key is deleted during the enrolment, the user stays enrolled and is told they were not added to a group.
+
+### Added
+- Tests for thirty guards that no test held, a test of the tree writer through the privacy provider of the engine, and a mutation spec (`mutations/`).
+
 ## 1.1.1+uai.1 - 2026-11-23
 
 ### Changed

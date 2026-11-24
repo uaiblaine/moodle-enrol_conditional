@@ -126,6 +126,28 @@ final class check_modes_test extends \advanced_testcase {
         return $php;
     }
 
+    public function test_stored_null_is_selected_by_the_sql_of_the_enrolment_mode(): void {
+        global $DB;
+        // The site default differs from what a NULL column means, and the enrolment bit is the one that matters
+        // here: a column read as it is gives NULL for the NULL row, which selects nothing, where COALESCE gives the bit.
+        set_config('checkmodelogin', 1, 'enrol_conditional');
+        $instance = $this->create_instance([]);
+        $DB->set_field('enrol', enrol_conditional_plugin::FIELD_CHECKMODES, null, ['id' => $instance->id]);
+        $instance = $DB->get_record('enrol', ['id' => $instance->id], '*', MUST_EXIST);
+
+        // The helper asserts that the PHP reading and the SQL one agree, and returns them.
+        $this->assertTrue($this->has_mode($instance, enrol_conditional_plugin::CHECK_ENROL));
+
+        // Control: a stored value without the enrolment bit is read as it is by the SQL.
+        $DB->set_field('enrol', enrol_conditional_plugin::FIELD_CHECKMODES, enrol_conditional_plugin::CHECK_LOGIN, [
+            'id' => $instance->id,
+        ]);
+        [$where, $params] = $this->plugin->get_enforcement_mode_sql(enrol_conditional_plugin::CHECK_ENROL);
+        $this->assertFalse($DB->record_exists_sql("SELECT 1 FROM {enrol} e WHERE e.id = :instanceid AND $where", $params + [
+            'instanceid' => $instance->id,
+        ]));
+    }
+
     public function test_stored_null_means_only_at_enrolment(): void {
         global $DB;
         // The site default differs from what a NULL column means, so the two readings can be told apart.

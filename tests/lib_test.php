@@ -842,6 +842,96 @@ final class lib_test extends \advanced_testcase {
     }
 
     /**
+     * Instance of a new course that is_self_enrol_available() accepts for the current user, to break one fact at a time.
+     *
+     * @return \stdClass Row of the enrol table, enabled, open, taking new enrolments, with no limit.
+     */
+    private function open_instance(): \stdClass {
+        global $DB;
+        $course = $this->getDataGenerator()->create_course();
+        $instance = $DB->get_record('enrol', ['courseid' => $course->id, 'enrol' => 'conditional'], '*', MUST_EXIST);
+        $instance->status = ENROL_INSTANCE_ENABLED;
+        $instance->customint6 = 1;
+        $instance->customint3 = 0;
+        $instance->enrolstartdate = 0;
+        $instance->enrolenddate = 0;
+        $DB->update_record('enrol', $instance);
+        return $instance;
+    }
+
+    /**
+     * Each cause that closes an instance refuses it alone, with its own reason, beside a control that returns true.
+     */
+    public function test_is_self_enrol_available_refuses_each_cause_alone(): void {
+        $this->resetAfterTest();
+        $plugin = enrol_get_plugin('conditional');
+        $user = $this->getDataGenerator()->create_user();
+        $this->setUser($user);
+        $instance = $this->open_instance();
+        $this->assertTrue($plugin->is_self_enrol_available($instance));
+
+        $closed = clone $instance;
+        $closed->status = ENROL_INSTANCE_DISABLED;
+        $this->assertSame(get_string('canntenrol', 'enrol_conditional'), $plugin->is_self_enrol_available($closed));
+
+        $early = clone $instance;
+        $early->enrolstartdate = time() + DAYSECS;
+        $this->assertSame(
+            get_string('canntenrolearly', 'enrol_conditional', userdate($early->enrolstartdate)),
+            $plugin->is_self_enrol_available($early)
+        );
+        $started = clone $instance;
+        $started->enrolstartdate = time() - DAYSECS;
+        $this->assertTrue($plugin->is_self_enrol_available($started));
+
+        $late = clone $instance;
+        $late->enrolenddate = time() - DAYSECS;
+        $this->assertSame(
+            get_string('canntenrollate', 'enrol_conditional', userdate($late->enrolenddate)),
+            $plugin->is_self_enrol_available($late)
+        );
+        $notended = clone $instance;
+        $notended->enrolenddate = time() + DAYSECS;
+        $this->assertTrue($plugin->is_self_enrol_available($notended));
+
+        $off = clone $instance;
+        $off->customint6 = 0;
+        $this->assertSame(get_string('canntenrol', 'enrol_conditional'), $plugin->is_self_enrol_available($off));
+
+        // Already enrolled: only the user's own enrolment closes it, another user's does not.
+        $other = $this->getDataGenerator()->create_user();
+        $plugin->enrol_user($instance, $other->id);
+        $this->assertTrue($plugin->is_self_enrol_available($instance));
+        $plugin->enrol_user($instance, $user->id);
+        $this->assertSame(get_string('canntenrol', 'enrol_conditional'), $plugin->is_self_enrol_available($instance));
+    }
+
+    /**
+     * The limit refuses at the boundary and not before, and only through is_self_enrol_available().
+     */
+    public function test_is_self_enrol_available_limit_boundary(): void {
+        $this->resetAfterTest();
+        $plugin = enrol_get_plugin('conditional');
+        $user = $this->getDataGenerator()->create_user();
+        $this->setUser($user);
+        $instance = $this->open_instance();
+        $instance->customint3 = 2;
+
+        // No enrolment, then one below the limit: still offered.
+        $this->assertTrue($plugin->is_self_enrol_available($instance));
+        $plugin->enrol_user($instance, $this->getDataGenerator()->create_user()->id);
+        $this->assertTrue($plugin->is_self_enrol_available($instance));
+
+        // As many enrolments as the limit: refused with its own reason.
+        $plugin->enrol_user($instance, $this->getDataGenerator()->create_user()->id);
+        $this->assertSame(get_string('maxenrolledreached', 'enrol_conditional'), $plugin->is_self_enrol_available($instance));
+
+        // Control: the same instance without a limit is offered again.
+        $instance->customint3 = 0;
+        $this->assertTrue($plugin->is_self_enrol_available($instance));
+    }
+
+    /**
      * Test is_self_enrol_available function behavior.
      */
     public function test_is_self_enrol_available(): void {

@@ -123,6 +123,51 @@ final class get_instance_info_test extends \advanced_testcase {
         $this->assertFalse($response['error']);
     }
 
+    public function test_context_the_session_may_not_use_is_refused(): void {
+        $course = $this->getDataGenerator()->create_course();
+        $id = $this->create_instance($course);
+        $this->setUser($this->getDataGenerator()->create_user());
+
+        // A token restricted to another course's context may not reach the category context this function validates.
+        $other = $this->getDataGenerator()->create_course();
+        \core_external\external_api::set_context_restriction(\context_course::instance($other->id));
+        try {
+            $response = $this->call($id);
+        } finally {
+            \core_external\external_api::set_context_restriction(null);
+        }
+        $this->assertTrue($response['error']);
+        $this->assertSame('restrictedcontextexception', $response['exception']->errorcode);
+
+        // Control: without the restriction the same call answers.
+        $response = $this->call($id);
+        $this->assertFalse($response['error']);
+        $this->assertEquals($id, $response['data']['id']);
+    }
+
+    public function test_execute_returns_only_the_declared_fields(): void {
+        $course = $this->getDataGenerator()->create_course();
+        $open = $this->create_instance($course);
+        $withkey = $this->create_instance($course, ['password' => 'secretkey', 'customtext1' => 'Welcome text']);
+        $this->setUser($this->getDataGenerator()->create_user());
+
+        // Straight from execute(): call_external_function() cleans the answer to the declared structure, so
+        // extra keys (the key itself among them) would never be seen through it.
+        $this->assertSame(['courseid', 'id', 'name', 'status', 'type'], $this->sorted_keys(get_instance_info::execute($open)));
+        $answer = get_instance_info::execute($withkey);
+        $this->assertSame(['courseid', 'enrolpassword', 'id', 'name', 'status', 'type'], $this->sorted_keys($answer));
+        $this->assertStringNotContainsString('secretkey', json_encode($answer));
+    }
+
+    public function test_key_zero_requires_the_key_field(): void {
+        $course = $this->getDataGenerator()->create_course();
+        $zero = $this->create_instance($course, ['password' => '0']);
+        $this->setUser($this->getDataGenerator()->create_user());
+
+        $response = $this->call($zero);
+        $this->assertSame(['courseid', 'enrolpassword', 'id', 'name', 'status', 'type'], $this->sorted_keys($response['data']));
+    }
+
     /**
      * Keys of an answer, sorted.
      *

@@ -220,4 +220,145 @@ final class enrol_user_test extends \advanced_testcase {
         $this->assertFalse($response['data']['status']);
         $this->assertFalse($this->enrolled($instance, (int) guest_user()->id));
     }
+
+    public function test_key_zero_is_a_key(): void {
+        $instance = $this->create_instance(['password' => '0']);
+        $user = $this->getDataGenerator()->create_user();
+        $this->setUser($user);
+
+        // A stored '0' is a key like any other: the empty post and a wrong key are refused.
+        foreach (['', 'wrongkey', '00'] as $key) {
+            $response = $this->call((int) $this->course->id, $key, (int) $instance->id);
+            $this->assertFalse($response['data']['status'], "Key '$key' must be refused.");
+            $this->assertFalse($this->enrolled($instance, (int) $user->id));
+        }
+
+        $response = $this->call((int) $this->course->id, '0', (int) $instance->id);
+        $this->assertTrue($response['data']['status']);
+        $this->assertTrue($this->enrolled($instance, (int) $user->id));
+    }
+
+    public function test_group_key_is_not_a_key_of_an_instance_without_one(): void {
+        global $CFG;
+        require_once($CFG->dirroot . '/group/lib.php');
+        $group = $this->getDataGenerator()->create_group(['courseid' => $this->course->id, 'enrolmentkey' => 'groupkey']);
+        $instance = $this->create_instance(['customint1' => 1]);
+        $user = $this->getDataGenerator()->create_user();
+        $this->setUser($user);
+
+        // The instance needs no key, so the posted one is only a string: it enrols, and it joins no group.
+        $response = $this->call((int) $this->course->id, 'groupkey', (int) $instance->id);
+        $this->assertTrue($response['data']['status']);
+        $this->assertTrue($this->enrolled($instance, (int) $user->id));
+        $this->assertFalse(groups_is_member($group->id, $user->id));
+
+        // Control: with a key of its own the same instance puts the group key's user in the group.
+        $keyed = $this->create_instance(['password' => 'coursekey', 'customint1' => 1]);
+        $other = $this->getDataGenerator()->create_user();
+        $this->setUser($other);
+        $response = $this->call((int) $this->course->id, 'groupkey', (int) $keyed->id);
+        $this->assertTrue($response['data']['status']);
+        $this->assertTrue(groups_is_member($group->id, $other->id));
+    }
+
+    public function test_conditions_are_decided_before_the_key(): void {
+        $allowed = $this->getDataGenerator()->create_user();
+        $refused = $this->getDataGenerator()->create_user();
+        $this->plugin->set_config('showhint', 1);
+        $instance = $this->create_instance([
+            'password' => 'rightkey',
+            'customtext2' => json_encode(['op' => 'and', 'children' => [
+                ['type' => 'fake', 'config' => ['userids' => [(int) $allowed->id]]],
+            ]]),
+        ]);
+
+        // A user who fails the conditions gets the conditions refusal whatever key is posted: no key hint, no key verdict.
+        $this->setUser($refused);
+        foreach (['rightkey', 'wrongkey', ''] as $key) {
+            $response = $this->call((int) $this->course->id, $key, (int) $instance->id);
+            $this->assertFalse($response['data']['status']);
+            $this->assertCount(1, $response['data']['warnings']);
+            $this->assertSame('1', (string) $response['data']['warnings'][0]['warningcode']);
+            $this->assertStringNotContainsString(
+                get_string('passwordinvalidhint', 'enrol_conditional', 'r'),
+                $response['data']['warnings'][0]['message']
+            );
+            $this->assertFalse($this->enrolled($instance, (int) $refused->id));
+        }
+
+        // Control: who meets the conditions is told about the key (with the hint) and enrols with the right one.
+        $this->setUser($allowed);
+        $response = $this->call((int) $this->course->id, 'wrongkey', (int) $instance->id);
+        $this->assertSame('3', (string) $response['data']['warnings'][0]['warningcode']);
+        $response = $this->call((int) $this->course->id, 'rightkey', (int) $instance->id);
+        $this->assertTrue($response['data']['status']);
+    }
+
+    public function test_instance_id_zero_tries_only_conditional_instances(): void {
+        global $DB;
+        \core\plugininfo\enrol::enable_plugin('self', true);
+        $selfplugin = enrol_get_plugin('self');
+        $selfid = $selfplugin->add_instance($this->course, ['status' => ENROL_INSTANCE_ENABLED, 'customint6' => 1]);
+        $manual = $DB->get_record('enrol', ['courseid' => $this->course->id, 'enrol' => 'manual'], '*', MUST_EXIST);
+        $instance = $this->create_instance(['password' => 'rightkey']);
+        $user = $this->getDataGenerator()->create_user();
+        $this->setUser($user);
+
+        // A refused key leaves one warning, for the one conditional instance: the others are never tried.
+        $response = $this->call((int) $this->course->id, 'wrongkey', 0);
+        $this->assertFalse($response['data']['status']);
+        $this->assertSame([(int) $instance->id], array_map(fn($w) => (int) $w['itemid'], $response['data']['warnings']));
+
+        // The id of an instance of another method is refused, enrolled or not.
+        foreach ([(int) $manual->id, (int) $selfid] as $otherid) {
+            $response = $this->call((int) $this->course->id, 'rightkey', $otherid);
+            $this->assertTrue($response['error']);
+            $this->assertSame('canntenrol', $response['exception']->errorcode);
+        }
+        $this->assertFalse(is_enrolled(\context_course::instance($this->course->id), $user));
+
+        // Control: the conditional instance, by id or by 0, enrols.
+        $response = $this->call((int) $this->course->id, 'rightkey', 0);
+        $this->assertTrue($response['data']['status']);
+        $this->assertTrue($this->enrolled($instance, (int) $user->id));
+    }
+
+    public function test_negative_instance_id_is_not_every_instance(): void {
+        $instance = $this->create_instance();
+        $user = $this->getDataGenerator()->create_user();
+        $this->setUser($user);
+
+        foreach ([-1, -(int) $instance->id] as $id) {
+            $response = $this->call((int) $this->course->id, '', $id);
+            $this->assertTrue($response['error']);
+            $this->assertSame('canntenrol', $response['exception']->errorcode);
+            $this->assertFalse($this->enrolled($instance, (int) $user->id));
+        }
+
+        $response = $this->call((int) $this->course->id, '', (int) $instance->id);
+        $this->assertTrue($response['data']['status']);
+    }
+
+    public function test_context_the_session_may_not_use_is_refused(): void {
+        $instance = $this->create_instance();
+        $user = $this->getDataGenerator()->create_user();
+        $this->setUser($user);
+
+        // A token restricted to another course's context may not reach the category context this function validates.
+        $othercourse = $this->getDataGenerator()->create_course();
+        \core_external\external_api::set_context_restriction(\context_course::instance($othercourse->id));
+        try {
+            $response = $this->call((int) $this->course->id, '', (int) $instance->id);
+        } finally {
+            \core_external\external_api::set_context_restriction(null);
+        }
+        $this->assertTrue($response['error']);
+        $this->assertSame('restrictedcontextexception', $response['exception']->errorcode);
+        $this->assertFalse($this->enrolled($instance, (int) $user->id));
+
+        // Control: without the restriction the same call enrols.
+        $response = $this->call((int) $this->course->id, '', (int) $instance->id);
+        $this->assertTrue($response['data']['status']);
+        $this->assertTrue($this->enrolled($instance, (int) $user->id));
+    }
 }

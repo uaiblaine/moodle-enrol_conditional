@@ -147,6 +147,7 @@ To extend their enrolment, go to {$a->extendurl}';
 $string['expirymessageenrollersubject'] = 'Self enrolment expiry notification';
 $string['expirynotifyall'] = 'Teacher and enrolled user';
 $string['expirynotifyenroller'] = 'Teacher only';
+$string['groupgone'] = 'You are enrolled in the course, but the group your key belonged to no longer exists, so you were not added to a group.';
 $string['groupkey'] = 'Use group enrolment keys';
 $string['groupkey_desc'] = 'Use group enrolment keys by default.';
 $string['groupkey_help'] = 'Whether the enrolment key of a group of the course also lets users enrol through this method, and puts them in that group.

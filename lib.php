@@ -24,6 +24,7 @@
 
 use core\output\single_button;
 use core_enrol\output\enrol_page;
+use enrol_conditional\local\cohort_restriction;
 use enrol_conditional\local\enrolment_key;
 
 /**
@@ -32,7 +33,9 @@ use enrol_conditional\local\enrolment_key;
  * @author Petr Skoda
  * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
-class enrol_conditional_plugin extends enrol_plugin implements \local_enrolconditions\enforceable {
+class enrol_conditional_plugin extends enrol_plugin implements
+    \local_enrolconditions\enforceable,
+    \local_enrolconditions\tree_writer {
     /** @var string Column of the enrol table with the condition tree (JSON). */
     public const FIELD_CONDITIONS = 'customtext2';
 
@@ -80,7 +83,7 @@ class enrol_conditional_plugin extends enrol_plugin implements \local_enrolcondi
             if ($this->get_self_enrol_status($instance, false, false) !== true) {
                 continue;
             }
-            if ($instance->password || $instance->customint1) {
+            if (enrolment_key::is_required($instance) || $instance->customint1) {
                 $key = true;
             } else {
                 $nokey = true;
@@ -242,7 +245,7 @@ class enrol_conditional_plugin extends enrol_plugin implements \local_enrolcondi
      * @throws moodle_exception When any of the checks above refuses.
      */
     public function enrol_conditional(stdClass $instance, $data = null) {
-        global $CFG, $USER;
+        global $CFG, $DB, $USER;
 
         if (!isloggedin() || isguestuser()) {
             throw new moodle_exception('noguestaccess', 'enrol');
@@ -267,7 +270,7 @@ class enrol_conditional_plugin extends enrol_plugin implements \local_enrolcondi
             throw new moodle_exception('passwordinvalid', 'enrol_conditional');
         }
         $groupid = null;
-        if ((string) $instance->password !== '' && !empty($instance->customint1)) {
+        if (enrolment_key::is_required($instance) && !empty($instance->customint1)) {
             $groupid = enrolment_key::find_group((int) $instance->courseid, $key);
         }
 
@@ -275,17 +278,61 @@ class enrol_conditional_plugin extends enrol_plugin implements \local_enrolcondi
         $timeend = $instance->enrolperiod ? $timestart + $instance->enrolperiod : 0;
 
         if ((int) $instance->customint3 > 0) {
-            $this->enrol_within_capacity($instance, (int) $USER->id, $timestart, $timeend);
+            $written = $this->enrol_within_capacity($instance, (int) $USER->id, $timestart, $timeend);
         } else {
-            $this->enrol_user($instance, $USER->id, $instance->roleid, $timestart, $timeend);
+            $written = $this->enrol_unless_enrolled($instance, (int) $USER->id, $timestart, $timeend);
+        }
+        if (!$written) {
+            // Another request enrolled this user first: nothing was written, so the period they got stays.
+            return;
         }
 
         \core\notification::success(get_string('youenrolledincourse', 'enrol'));
 
         if ($groupid !== null) {
             require_once($CFG->dirroot . '/group/lib.php');
-            // No component: core_group's privacy provider covers the membership.
-            groups_add_member($groupid, $USER->id);
+            // The group was found before the enrolment: another request may have deleted it since. The user is
+            // enrolled by now, so the loss is told instead of thrown.
+            $group = $DB->get_record('groups', ['id' => $groupid, 'courseid' => $instance->courseid]);
+            if ($group) {
+                // No component: core_group's privacy provider covers the membership.
+                groups_add_member($group, $USER->id);
+            } else {
+                \core\notification::warning(get_string('groupgone', 'enrol_conditional'));
+            }
+        }
+    }
+
+    /**
+     * Enrols a user unless they are enrolled already, deciding under a lock of this instance and user.
+     *
+     * The status read at the start of the request may be older than another request's enrolment of the same user,
+     * and enrol_user() on an existing enrolment would restart its period. Two simultaneous requests of one user
+     * both pass a read taken without a lock, so the read that decides is taken under a core lock of the instance
+     * and the user: one user never waits for another, and the lock factory is the site's (shared by every node).
+     *
+     * @param stdClass $instance Enrolment instance.
+     * @param int $userid
+     * @param int $timestart
+     * @param int $timeend
+     * @return bool Whether the enrolment was written.
+     * @throws moodle_exception capacitybusy when the lock is not granted; nothing is written then.
+     */
+    protected function enrol_unless_enrolled(stdClass $instance, int $userid, int $timestart, int $timeend): bool {
+        global $DB;
+        $factory = \core\lock\lock_config::get_lock_factory('enrol_conditional');
+        $lock = $factory->get_lock('enrol_' . $instance->id . '_' . $userid, 10);
+        if (!$lock) {
+            throw new moodle_exception('capacitybusy', 'enrol_conditional');
+        }
+        try {
+            if ($DB->record_exists('user_enrolments', ['enrolid' => $instance->id, 'userid' => $userid])) {
+                return false;
+            }
+            $this->enrol_user($instance, $userid, $instance->roleid, $timestart, $timeend);
+            return true;
+        } finally {
+            $lock->release();
         }
     }
 
@@ -293,16 +340,16 @@ class enrol_conditional_plugin extends enrol_plugin implements \local_enrolcondi
      * Enrols a user when the instance still has a free place, deciding under a lock per instance.
      *
      * The enrol page counted the places earlier, possibly on another web node; the count that decides is
-     * the one taken under the lock, right before the write.
+     * the one taken under the lock, right before the write, together with whether the user is enrolled already.
      *
      * @param stdClass $instance Enrolment instance with a limit (customint3 > 0).
      * @param int $userid
      * @param int $timestart
      * @param int $timeend
-     * @return void
+     * @return bool Whether the enrolment was written; false when the user was enrolled already.
      * @throws moodle_exception capacitybusy when the lock is not granted, maxenrolledreached when full.
      */
-    protected function enrol_within_capacity(stdClass $instance, int $userid, int $timestart, int $timeend): void {
+    protected function enrol_within_capacity(stdClass $instance, int $userid, int $timestart, int $timeend): bool {
         global $DB;
         $factory = \core\lock\lock_config::get_lock_factory('enrol_conditional');
         $lock = $factory->get_lock('capacity_' . $instance->id, 10);
@@ -310,10 +357,14 @@ class enrol_conditional_plugin extends enrol_plugin implements \local_enrolcondi
             throw new moodle_exception('capacitybusy', 'enrol_conditional');
         }
         try {
+            if ($DB->record_exists('user_enrolments', ['enrolid' => $instance->id, 'userid' => $userid])) {
+                return false;
+            }
             if ($DB->count_records('user_enrolments', ['enrolid' => $instance->id]) >= (int) $instance->customint3) {
                 throw new moodle_exception('maxenrolledreached', 'enrol_conditional');
             }
             $this->enrol_user($instance, $userid, $instance->roleid, $timestart, $timeend);
+            return true;
         } finally {
             $lock->release();
         }
@@ -331,7 +382,7 @@ class enrol_conditional_plugin extends enrol_plugin implements \local_enrolcondi
 
         $enrolstatus = $this->can_self_enrol($instance);
         if ($enrolstatus === true) {
-            if ($instance->password) {
+            if (enrolment_key::is_required($instance)) {
                 // Self-enrolment with password. Display a button to open a form in a modal.
                 $body = get_string('enrolkeyrequired', 'enrol_conditional');
                 $buttonurl = $PAGE->url;
@@ -504,6 +555,30 @@ class enrol_conditional_plugin extends enrol_plugin implements \local_enrolcondi
         return $instance->{self::FIELD_CONDITIONS} ?? null;
     }
 
+    /**
+     * Stores a tree the engine changed to erase personal data, without validating it.
+     *
+     * The caller is the privacy system, possibly with no user, so the reach check of update_instance() does not
+     * apply. The door still checks what it can: the row must exist and be an instance of this method.
+     *
+     * @param stdClass $instance Instance as read before the change; only its id is used.
+     * @param string $json Tree as \local_enrolconditions\tree::to_json() returns it.
+     * @throws coding_exception When the id is not an instance of this method.
+     */
+    #[\Override]
+    public function set_enforcement_tree(stdClass $instance, string $json): void {
+        global $DB;
+        $current = $DB->get_record('enrol', ['id' => $instance->id ?? 0, 'enrol' => 'conditional']);
+        if (!$current) {
+            throw new coding_exception('Not an instance of the conditional enrolment method');
+        }
+        $current->{self::FIELD_CONDITIONS} = $json;
+        $current->timemodified = time();
+        $DB->update_record('enrol', $current);
+        \core\event\enrol_instance_updated::create_from_record($current)->trigger();
+        $this->purge_event_map();
+    }
+
     #[\Override]
     public function get_enforcement_check_modes(stdClass $instance): int {
         return self::get_check_modes($instance);
@@ -562,13 +637,13 @@ class enrol_conditional_plugin extends enrol_plugin implements \local_enrolcondi
         $instanceinfo->name = $this->get_instance_name($instance);
         $instanceinfo->status = $this->can_self_enrol($instance);
 
-        if ($instance->password) {
+        if (enrolment_key::is_required($instance)) {
             $instanceinfo->requiredparam = new stdClass();
             $instanceinfo->requiredparam->enrolpassword = get_string('password', 'enrol_conditional');
         }
 
         // If enrolment is possible and password is required then return ws function name to get more information.
-        if ((true === $instanceinfo->status) && $instance->password) {
+        if ((true === $instanceinfo->status) && enrolment_key::is_required($instance)) {
             $instanceinfo->wsfunction = 'enrol_conditional_get_instance_info';
         }
         return $instanceinfo;
@@ -907,8 +982,19 @@ class enrol_conditional_plugin extends enrol_plugin implements \local_enrolcondi
             $instanceid = $instance->id;
         } else {
             $samesite = $step->get_task()->is_samesite();
+            // A backup taken before the cohort restriction became a condition carries it in customint5, which
+            // nothing reads: it joins the tree first, so that from another site it is made unknown with the rest.
+            $oldcohort = (int) ($data->customint5 ?? 0);
+            // The column is cleared once the restriction is in the tree, never before: a tree that does not
+            // parse comes out as the cohort condition alone.
+            if ($oldcohort !== 0) {
+                $stored = $data->{self::FIELD_CONDITIONS} ?? null;
+                $data->{self::FIELD_CONDITIONS} = cohort_restriction::add_to_tree($stored, $oldcohort);
+            }
+            $data->customint5 = 0;
             try {
-                $data->{self::FIELD_CONDITIONS} = \local_enrolconditions\tree::from_json($data->{self::FIELD_CONDITIONS} ?? null)
+                $json = $data->{self::FIELD_CONDITIONS} ?? null;
+                $data->{self::FIELD_CONDITIONS} = \local_enrolconditions\tree::from_json($json)
                     ->for_restore($samesite)->to_json();
                 // Structure only: a tree whose types or configuration do not validate on this site is kept,
                 // and evaluates to unknown or not met, so nobody enrols until a teacher fixes it.
@@ -1016,12 +1102,12 @@ class enrol_conditional_plugin extends enrol_plugin implements \local_enrolcondi
         // we must check whether the password meets the password policies.
         if ($instance->status == ENROL_INSTANCE_DISABLED) {
             if ($this->get_config('requirepassword')) {
-                if (empty($instance->password)) {
+                if (!enrolment_key::is_required($instance)) {
                     return false;
                 }
             }
             // Only check the password if it is set.
-            if (!empty($instance->password) && $this->get_config('usepasswordpolicy')) {
+            if (enrolment_key::is_required($instance) && $this->get_config('usepasswordpolicy')) {
                 if (!\core\di::get(\core\authentication\password::class)->check_policy($instance->password, $errmsg)) {
                     return false;
                 }
@@ -1315,7 +1401,7 @@ class enrol_conditional_plugin extends enrol_plugin implements \local_enrolcondi
             $policy = $this->get_config('usepasswordpolicy');
             if ($require && trim($data['password']) === '') {
                 $errors['password'] = get_string('required');
-            } else if (!empty($data['password'])) {
+            } else if (enrolment_key::is_key((string) $data['password'])) {
                 if ($policy) {
                     $errmsg = '';
                     if (!\core\di::get(\core\authentication\password::class)->check_policy($data['password'], $errmsg)) {
@@ -1779,7 +1865,7 @@ class enrol_conditional_plugin extends enrol_plugin implements \local_enrolcondi
      * @return stdClass updated instance
      */
     public function update_enrol_plugin_data(int $courseid, array $enrolmentdata, stdClass $instance): stdClass {
-        if (!empty($enrolmentdata['password'])) {
+        if (enrolment_key::is_key((string) ($enrolmentdata['password'] ?? ''))) {
             $instance->password = $enrolmentdata['password'];
         }
         return parent::update_enrol_plugin_data($courseid, $enrolmentdata, $instance);
@@ -1799,7 +1885,11 @@ class enrol_conditional_plugin extends enrol_plugin implements \local_enrolcondi
 
         $errors = parent::validate_enrol_plugin_data($enrolmentdata, $courseid);
         $policy = $this->get_config('usepasswordpolicy');
-        if (!empty($enrolmentdata['password'])) {
+        if (enrolment_key::is_key((string) ($enrolmentdata['password'] ?? ''))) {
+            // The column holds 50 characters, the bound the instance form puts on the key.
+            if (core_text::strlen((string) $enrolmentdata['password']) > 50) {
+                $errors['errorpasswordtoolong'] = new lang_string('err_maxlength', 'form', 50);
+            }
             if ($policy) {
                 $errarray = \core\di::get(\core\authentication\password::class)->get_policy_errors($enrolmentdata['password']);
                 foreach ($errarray as $i => $err) {

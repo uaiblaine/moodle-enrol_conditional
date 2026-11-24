@@ -144,7 +144,7 @@ class enrol_form extends dynamic_form {
             $reason = html_to_text((string) $canselfenrol, 0, false);
             throw new \moodle_exception('cannotenrolreason', 'enrol_conditional', '', $reason);
         }
-        if (!$instance->password) {
+        if (!enrolment_key::is_required($instance)) {
             throw new \moodle_exception('nopassword', 'enrol_conditional');
         }
     }

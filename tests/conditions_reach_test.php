@@ -130,6 +130,22 @@ final class conditions_reach_test extends \advanced_testcase {
         $this->assertArrayNotHasKey('customtext2_editor', $errors);
     }
 
+    public function test_a_missing_course_gets_the_answer_of_a_hidden_one(): void {
+        $instance = $this->stored_instance(self::tree([]));
+        $context = \context_course::instance($this->course->id);
+        $this->setUser($this->teacher);
+        $missingid = (int) $this->hidden->id + 1000;
+
+        $hidden = $this->plugin->validate_conditions(self::tree([(int) $this->hidden->id]), $instance, $context);
+        $missing = $this->plugin->validate_conditions(self::tree([$missingid]), $instance, $context);
+
+        // The reach check answers first, so the teacher cannot tell a course that does not exist from one out of reach.
+        $this->assertNotNull($hidden);
+        $this->assertStringContainsString(get_string('noaccess', 'enrolcond_coursecompleted'), $hidden);
+        $this->assertStringContainsString(get_string('noaccess', 'enrolcond_coursecompleted'), $missing);
+        $this->assertStringNotContainsString(get_string('invalidcourse', 'enrolcond_coursecompleted'), $missing);
+    }
+
     public function test_update_instance_refuses_a_hidden_course(): void {
         global $DB;
         $instance = $this->stored_instance(self::tree([(int) $this->visible->id]));

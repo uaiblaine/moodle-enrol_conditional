@@ -147,6 +147,7 @@ Para prorrogar a inscrição deles, acesse {$a->extendurl}';
 $string['expirymessageenrollersubject'] = 'Notificação de expiração da autoinscrição';
 $string['expirynotifyall'] = 'Professor e usuário inscrito';
 $string['expirynotifyenroller'] = 'Somente o professor';
+$string['groupgone'] = 'Você está inscrito no curso, mas o grupo da sua chave não existe mais, então você não foi adicionado a um grupo.';
 $string['groupkey'] = 'Usar chaves de inscrição de grupo';
 $string['groupkey_desc'] = 'Usar chaves de inscrição de grupo por padrão.';
 $string['groupkey_help'] = 'Se a chave de inscrição de um grupo do curso também permite a inscrição por este método e coloca o usuário nesse grupo.

@@ -44,6 +44,32 @@ final class enrolment_key {
     public const REFUSED = 4;
 
     /**
+     * Whether the instance needs a key to enrol.
+     *
+     * The one answer for the enrol page, the listing icons, the app information, the key form and the enrolment
+     * itself: a stored key of '0' is a key, which a truthiness test of the column would not say.
+     *
+     * @param stdClass $instance Enrolment instance.
+     * @return bool
+     */
+    public static function is_required(stdClass $instance): bool {
+        return self::is_key((string) ($instance->password ?? ''));
+    }
+
+    /**
+     * Whether a key as typed, posted or uploaded is a key.
+     *
+     * The one definition for a value that is not an instance yet (the instance form, the course upload): only the
+     * empty string is no key, and '0' is one.
+     *
+     * @param string $key
+     * @return bool
+     */
+    public static function is_key(string $key): bool {
+        return $key !== '';
+    }
+
+    /**
      * Checks a posted key against an instance.
      *
      * The values double as the warning codes of the enrol_conditional_enrol_user web service.
@@ -53,10 +79,10 @@ final class enrolment_key {
      * @return int One of the class constants.
      */
     public static function check(stdClass $instance, string $key): int {
-        $stored = (string) ($instance->password ?? '');
-        if ($stored === '') {
+        if (!self::is_required($instance)) {
             return self::ACCEPTED;
         }
+        $stored = (string) $instance->password;
         if ($key !== '' && hash_equals($stored, $key)) {
             return self::ACCEPTED;
         }

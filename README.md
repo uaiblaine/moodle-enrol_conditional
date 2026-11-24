@@ -22,7 +22,7 @@ Requirements
 ------------
 
 - Moodle 5.3 LTS or later (`$plugin->requires` 2026100200; tested on Moodle 5.3).
-- [`local_enrolconditions`](https://github.com/uaiblaine/moodle-local_enrolconditions) (the version named in this plugin's `version.php` or later), which provides the condition engine and the `enrolcond` subplugins. Moodle does not allow subplugins in enrolment plugins, which is why the engine is a separate plugin. Its documentation: <https://moodle-by-kelsoncm.github.io/moodle-local_enrolconditions/>.
+- [`local_enrolconditions`](https://github.com/uaiblaine/moodle-local_enrolconditions) 1.2.0+uai.2 (2026112301) or later, which provides the condition engine and the `enrolcond` subplugins. Moodle does not allow subplugins in enrolment plugins, which is why the engine is a separate plugin. Its documentation: <https://moodle-by-kelsoncm.github.io/moodle-local_enrolconditions/>.
 
 
 Installation
@@ -92,7 +92,7 @@ The condition tree of each instance is stored in the instance (`enrol` table), i
 
 **Course backups** that include this enrolment method carry the condition tree, hence those username lists and the uploaded files; when the backup includes users, it also carries the open suspension records of the instance, and a restore writes them to the target site.
 
-**Personal data**: the plugin keeps none of its own (its privacy provider declares so); the personal data it relates to is the suspension state per enrolment, which the engine stores and exports, and the username lists above.
+**Personal data**: the plugin keeps none of its own (its privacy provider declares so); the personal data it relates to is the suspension state per enrolment, which the engine stores and exports, and the username lists above, which the engine erases from the stored trees of this method on a privacy request.
 
 **External services.** The plugin sends no data to any external service. It sends the usual enrolment messages (welcome and expiry notices) through Moodle's messaging.
 

@@ -68,7 +68,7 @@ See `moodle-dev/cloud/README.md`.
 
 ```
 lib.php                 enrol_conditional_plugin (implements the engine's enforceable)
-classes/local/          enrolment_key (key and group-key logic shared by the form, the web service and the enrolment)
+classes/local/          enrolment_key (key logic shared by form, web service, enrolment), cohort_restriction (restore)
 classes/external/       get_instance_info, enrol_user (the web services)
 classes/form/           enrol form shown to the user; classes/*operation.php, *_form.php bulk edit/delete
 classes/task/           sync_enrolments, send_expiry_notifications
@@ -92,6 +92,9 @@ docs/                   upstream's documentation (en, pt_BR), export-ignored
   engine version it needs. Reason: the dependency is by version number, and a stale pair fails at install.
 - **The audit of 2026-11-23** is in `~/dev/moodle-dev/data/audits/enrol_conditional-local_enrolconditions-2026-11-23.md`
   (not versioned). Read it before touching enforcement, backup/restore or the SQL list condition.
+- **The branch model is upstream's: `main` only.** Fleet work lives on feature branches and reaches upstream as pull
+  requests, a separate piece of work; there is no `MOODLE_503_STABLE`. `mutations/gates.conf` holds the mutation
+  gates: before a push sweep both database families with `mdl mutate <repo> mutations/gates.conf --fast --changed <base>`.
 - `AGENTS.md` is upstream's file and only points here.
 
 ## Architecture gotchas
@@ -117,6 +120,17 @@ docs/                   upstream's documentation (en, pt_BR), export-ignored
 - **`lang/pt_br`** exists, in lockstep with `lang/en`, `export-ignore`d; in Portuguese "inscrição", never "matrícula".
 - **Backup carries the open state rows** when users are included, and the files of `enrolcond_userfile`; restore maps
   users back. Reason: without the rows a restored site could never reactivate what the source site suspended.
+- **The method implements `\local_enrolconditions\tree_writer`**, the one writer of the tree that does not validate.
+  Reason: its caller is the privacy system, which erases usernames with no user to check reach for; it checks only
+  that the row is an instance of this method.
+- **`enrolment_key::is_required()` is the one definition of "needs a key"**, for the form, the icon and the app info.
+- **"Already enrolled" and the free places are read again right before the write** (under the capacity lock when
+  there is a limit). Reason: a second request must not restart the period or overfill the instance.
+- **An old backup's `customint5` becomes a cohort condition on restore** (`cohort_restriction`); from another site it
+  matches nobody.
+- **The bodies of `can_self_enrol`, `is_self_enrol_available`, `get_self_enrol_status`, `get_instance_status` and the
+  public `evaluate_conditions()` are a contract `local_unlistedcourses` mirrors and fingerprints**: tell that plugin
+  before changing them.
 - **Groups added by the method are added without a component** (`groups_add_member($id, $userid)`), so core's group
   provider covers them. If that ever passes `enrol_conditional`, the privacy provider must link `core_group`.
 

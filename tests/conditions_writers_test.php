@@ -40,6 +40,8 @@ final class conditions_writers_test extends \advanced_testcase {
         'lib.php::insert_instance' => 'Structure only; add_instance() runs validate_conditions() before calling it.',
         'lib.php::update_instance' => 'validate_conditions() when the tree differs from the stored one.',
         'lib.php::restore_instance' => 'Structure only, on purpose: a tree invalid here is kept and evaluates to unknown.',
+        'lib.php::set_enforcement_tree' => 'None, on purpose: the privacy system erases a username from a tree already stored, '
+            . 'with no user to check reach for; it checks only that the row is an instance of this method.',
         'db/upgrade.php::xmldb_enrol_conditional_upgrade' => 'Upgrade rewrite of trees already stored.',
     ];
 
