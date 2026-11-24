@@ -202,11 +202,14 @@ final class backup_restore_test extends \advanced_testcase {
         $result = $this->plugin->evaluate_conditions($restored, (int) $user->id);
         $this->assertTrue($result->is_met());
 
-        // Control: from another site the list names other people, so the condition comes back without its file
-        // and nobody meets it.
+        // Control: from another site the list names other people, so the condition comes back without its file.
+        // It cannot be evaluated: unknown, which the engine reports to developers, never "not met".
         $othercourseid = $this->backup_and_restore((int) $course->id, true);
         $other = $DB->get_record('enrol', ['courseid' => $othercourseid, 'enrol' => 'conditional'], '*', MUST_EXIST);
-        $this->assertFalse($this->plugin->evaluate_conditions($other, (int) $user->id)->is_met());
+        $otherresult = $this->plugin->evaluate_conditions($other, (int) $user->id);
+        $this->assertTrue($otherresult->is_unknown());
+        $this->assertFalse($otherresult->is_met());
+        $this->assertDebuggingCalled();
     }
 
     public function test_other_site(): void {
