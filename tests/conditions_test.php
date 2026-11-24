@@ -90,6 +90,60 @@ final class conditions_test extends \advanced_testcase {
         $this->plugin->add_instance($course, ['customtext2' => '{"op":"xor"}']);
     }
 
+    public function test_add_instance_rejects_invalid_configuration(): void {
+        global $DB;
+        $course = $this->getDataGenerator()->create_course();
+        try {
+            $this->plugin->add_instance($course, ['customtext2' => self::tree([])]);
+            $this->fail('An invalid configuration must be refused.');
+        } catch (\local_enrolconditions\invalid_tree_exception $e) {
+            $this->assertSame('treeinvalid', $e->errorcode);
+        }
+        $this->assertSame(0, $DB->count_records('enrol', ['courseid' => $course->id, 'enrol' => 'conditional']));
+
+        // Control: a valid configuration is stored.
+        $this->plugin->add_instance($course, ['customtext2' => self::tree([3])]);
+        $this->assertSame(1, $DB->count_records('enrol', ['courseid' => $course->id, 'enrol' => 'conditional']));
+    }
+
+    public function test_update_instance_validates_a_changed_tree(): void {
+        global $DB;
+        $course = $this->getDataGenerator()->create_course();
+        $id = $this->plugin->add_instance($course, ['customtext2' => self::tree([3])]);
+        $instance = $DB->get_record('enrol', ['id' => $id]);
+        $stored = $instance->customtext2;
+
+        $data = (object) ['expirynotify' => 0, 'customtext2' => self::tree([])];
+        try {
+            $this->plugin->update_instance($instance, $data);
+            $this->fail('An invalid configuration must be refused.');
+        } catch (\local_enrolconditions\invalid_tree_exception $e) {
+            $this->assertSame('treeinvalid', $e->errorcode);
+        }
+        $this->assertSame($stored, $DB->get_field('enrol', 'customtext2', ['id' => $id]));
+
+        // Control: a valid change is stored.
+        $data = (object) ['expirynotify' => 0, 'customtext2' => self::tree([4])];
+        $this->plugin->update_instance($instance, $data);
+        $this->assertNotSame($stored, $DB->get_field('enrol', 'customtext2', ['id' => $id]));
+    }
+
+    public function test_update_instance_keeps_a_stored_invalid_tree(): void {
+        global $DB;
+        $course = $this->getDataGenerator()->create_course();
+        $id = $this->plugin->add_instance($course, ['customtext2' => self::tree([3])]);
+        // A tree that no longer validates, for example after its condition type was disabled.
+        $DB->set_field('enrol', 'customtext2', self::tree([]), ['id' => $id]);
+        $instance = $DB->get_record('enrol', ['id' => $id]);
+
+        // The course upload sends every stored field back; the other fields still save.
+        $data = clone $instance;
+        $data->name = 'Renamed';
+        $this->plugin->update_instance($instance, $data);
+        $this->assertSame('Renamed', $DB->get_field('enrol', 'name', ['id' => $id]));
+        $tree = json_decode($DB->get_field('enrol', 'customtext2', ['id' => $id]), true);
+        $this->assertSame(['userids' => []], $tree['children'][0]['config']);
+    }
     public function test_update_instance_keeps_tree_when_not_sent(): void {
         global $DB;
         $course = $this->getDataGenerator()->create_course();
@@ -117,7 +171,8 @@ final class conditions_test extends \advanced_testcase {
         $missing = '{"op":"and","children":[{"type":"missing","config":{}}]}';
         $this->assertNotNull($this->plugin->validate_conditions($missing));
         $course = $this->getDataGenerator()->create_course();
-        $id = $this->plugin->add_instance($course, ['customtext2' => $missing]);
+        $id = $this->plugin->add_instance($course, []);
+        $DB->set_field('enrol', 'customtext2', $missing, ['id' => $id]);
         $instance = $DB->get_record('enrol', ['id' => $id]);
         $this->assertNull($this->plugin->validate_conditions($missing, $instance));
     }

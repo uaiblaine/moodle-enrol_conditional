@@ -15,7 +15,7 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Capabilities for self enrolment plugin.
+ * Capabilities of the conditional self enrolment plugin.
  *
  * @package    enrol_conditional
  * @copyright  2010 Petr Skoda {@link http://skodak.org}
@@ -26,7 +26,7 @@ defined('MOODLE_INTERNAL') || die();
 
 $capabilities = [
 
-    /* Add or edit enrol-self instance in course. */
+    /* Add or edit conditional self enrolment instances in a course. */
     'enrol/conditional:config' => [
 
         'captype' => 'write',
@@ -37,7 +37,7 @@ $capabilities = [
         ],
     ],
 
-    /* Manage user self-enrolments. */
+    /* Manage the enrolments made through conditional self enrolment instances. */
     'enrol/conditional:manage' => [
 
         'captype' => 'write',

@@ -19,11 +19,11 @@ namespace enrol_conditional\event;
 /**
  * The conditions of a user enrolment stopped being met.
  *
- * Triggered once per episode when the action is "none", and before the removal when the action is "remove".
- * Suspensions trigger user_enrolment_suspended instead.
+ * Its log entries record one per episode when the action was "none", and one before the removal when the action
+ * was "remove"; suspensions were logged as user_enrolment_suspended.
  *
- * Deprecated since 1.1.0: no longer triggered. \local_enrolconditions\event\conditions_not_met replaces it;
- * kept so the logs written before still display.
+ * Not triggered by this plugin: the engine triggers \local_enrolconditions\event\conditions_not_met. The class
+ * stays so that the log entries of this event still display.
  *
  * @property-read array $other {
  *      - int enrolid: enrolment instance id.

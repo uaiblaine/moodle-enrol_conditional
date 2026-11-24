@@ -15,7 +15,7 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * A bulk operation for the self enrolment plugin to delete selected users enrolments.
+ * A bulk operation for the conditional self enrolment plugin to delete selected users enrolments.
  *
  * @package enrol_conditional
  * @copyright 2018 Farhan Karmali
@@ -23,7 +23,7 @@
  */
 
 /**
- * A bulk operation for the self enrolment plugin to delete selected users enrolments.
+ * A bulk operation for the conditional self enrolment plugin to delete selected users enrolments.
  *
  * @package enrol_conditional
  * @copyright 2018 Farhan Karmali
@@ -31,7 +31,8 @@
  */
 class enrol_conditional_deleteselectedusers_operation extends enrol_bulk_enrolment_operation {
     /**
-     * Returns the title to display for this bulk operation.
+     * Returns the identifier for this bulk operation. This is the key used when the plugin
+     * returns an array containing all of the bulk operations it supports.
      *
      * @return string
      */
@@ -40,8 +41,7 @@ class enrol_conditional_deleteselectedusers_operation extends enrol_bulk_enrolme
     }
 
     /**
-     * Returns the identifier for this bulk operation. This is the key used when the plugin
-     * returns an array containing all of the bulk operations it supports.
+     * Returns the title to display for this bulk operation.
      *
      * @return string
      */
@@ -58,7 +58,7 @@ class enrol_conditional_deleteselectedusers_operation extends enrol_bulk_enrolme
      * @return enrol_conditional_deleteselectedusers_form
      */
     public function get_form($defaultaction = null, $defaultcustomdata = null) {
-        if (![$defaultcustomdata]) {
+        if (!is_array($defaultcustomdata)) {
             $defaultcustomdata = [];
         }
         $defaultcustomdata['title'] = $this->get_title();
@@ -71,21 +71,28 @@ class enrol_conditional_deleteselectedusers_operation extends enrol_bulk_enrolme
     /**
      * Processes the bulk operation request for the given userids with the provided properties.
      *
+     * Only the enrolments of this method are removed: the capability checked is this method's, and a selected
+     * user may carry enrolments of other methods when the manager is not filtered by instance.
+     *
      * @param course_enrolment_manager $manager
-     * @param array $users
+     * @param array $users Users with their enrolments, as the participants page selects them.
      * @param stdClass $properties The data returned by the form.
+     * @return bool Whether the operation ran.
      */
     public function process(course_enrolment_manager $manager, array $users, stdClass $properties) {
         if (!has_capability("enrol/conditional:unenrol", $manager->get_context())) {
             return false;
         }
 
+        $name = $this->plugin->get_name();
         foreach ($users as $user) {
             foreach ($user->enrolments as $enrolment) {
-                $plugin = $enrolment->enrolmentplugin;
                 $instance = $enrolment->enrolmentinstance;
-                if ($plugin->allow_unenrol_user($instance, $enrolment)) {
-                    $plugin->unenrol_user($instance, $user->id);
+                if ($instance->enrol !== $name) {
+                    continue;
+                }
+                if ($this->plugin->allow_unenrol_user($instance, $enrolment)) {
+                    $this->plugin->unenrol_user($instance, $user->id);
                 }
             }
         }

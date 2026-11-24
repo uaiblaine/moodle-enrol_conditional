@@ -27,8 +27,11 @@ use local_enrolconditions\local\enforcer;
 /**
  * Restores the open records of local_enrolconditions_state.
  *
- * A record is restored only when the restored enrolment still matches it (suspended, for a suspension) and has
- * no open record yet. Its uetimemodified takes the restored enrolment, so the enforcer keeps owning the suspension.
+ * A record is restored only when the backup comes from this site, the restore itself created the enrolment, the
+ * enrolment still matches it (suspended, for a suspension) and it has no open record yet. Its uetimemodified takes
+ * the restored enrolment, so the enforcer keeps owning the suspension. An enrolment that existed in the target
+ * before the restore was suspended, or not, by someone the backup knows nothing about: it gets no record, so the
+ * enforcer never reactivates it.
  *
  * @package    enrol_conditional
  * @copyright  2026 Kelson Medeiros <kelsoncm@gmail.com>
@@ -48,6 +51,8 @@ class restore_enrol_conditional_plugin extends restore_enrol_plugin {
 
     /**
      * Restores the files of usernames, keeping their item ids, which the condition trees refer to.
+     *
+     * @return void
      */
     public function after_execute_enrol() {
         $this->add_related_files('enrolcond_userfile', 'usernames', null);
@@ -57,10 +62,15 @@ class restore_enrol_conditional_plugin extends restore_enrol_plugin {
      * Restores one state record. User enrolments come before it in the backup.
      *
      * @param array|stdClass $data
+     * @return void
      */
     public function process_enrol_conditional_state($data) {
         global $DB;
         $data = (object) $data;
+        // A suspension decided on another site, under its own users and conditions, is not this site's to own.
+        if (!$this->get_task()->is_samesite()) {
+            return;
+        }
         $enrolid = $this->get_new_parentid('enrol');
         $userid = $this->get_mappingid('user', $data->userid);
         if (!$enrolid || !$userid) {
@@ -68,6 +78,11 @@ class restore_enrol_conditional_plugin extends restore_enrol_plugin {
         }
         $ue = $DB->get_record('user_enrolments', ['enrolid' => $enrolid, 'userid' => $userid]);
         if (!$ue) {
+            return;
+        }
+        // Recorded by enrol_conditional_plugin::restore_user_enrolment(), which ran earlier in this restore and
+        // whose lib.php is therefore loaded, when this restore created the enrolment.
+        if (!$this->get_mappingid(\enrol_conditional_plugin::RESTORE_CREATED_ENROLMENT, $ue->id)) {
             return;
         }
         if ($data->action === enforcer::STATE_SUSPEND && (int) $ue->status !== ENROL_USER_SUSPENDED) {

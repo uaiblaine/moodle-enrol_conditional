@@ -15,7 +15,7 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * A bulk operation for the manual enrolment plugin to edit selected users.
+ * A bulk operation for the conditional self enrolment plugin to edit selected users.
  *
  * @package enrol_conditional
  * @copyright 2018 Farhan Karmali
@@ -23,7 +23,7 @@
  */
 
 /**
- * A bulk operation for the manual enrolment plugin to edit selected users.
+ * A bulk operation for the conditional self enrolment plugin to edit selected users.
  *
  * @package enrol_conditional
  * @copyright 2018 Farhan Karmali
@@ -42,6 +42,8 @@ class enrol_conditional_editselectedusers_operation extends enrol_bulk_enrolment
     /**
      * Returns the identifier for this bulk operation. This is the key used when the plugin
      * returns an array containing all of the bulk operations it supports.
+     *
+     * @return string
      */
     public function get_identifier() {
         return 'editselectedusers';
@@ -50,19 +52,24 @@ class enrol_conditional_editselectedusers_operation extends enrol_bulk_enrolment
     /**
      * Processes the bulk operation request for the given userids with the provided properties.
      *
+     * Only the enrolments of this method change. Each selected user carries every enrolment the manager
+     * loaded, which, when it is not filtered by instance, includes those of other methods: core refuses to
+     * update them through this plugin and would stop the batch halfway.
+     *
      * @param course_enrolment_manager $manager
-     * @param array $users
+     * @param array $users Users with their enrolments, as the participants page selects them.
      * @param stdClass $properties The data returned by the form.
+     * @return bool Whether the operation ran.
      */
     public function process(course_enrolment_manager $manager, array $users, stdClass $properties) {
         if (!has_capability("enrol/conditional:manage", $manager->get_context())) {
             return false;
         }
 
-        // Get all of the user enrolments.
+        // Get the user enrolments of this method.
         $instances = [];
         foreach ($users as $user) {
-            foreach ($user->enrolments as $enrolment) {
+            foreach ($this->own_enrolments($user) as $enrolment) {
                 if (!array_key_exists($enrolment->id, $instances)) {
                     $instances[$enrolment->id] = $enrolment;
                 }
@@ -89,7 +96,7 @@ class enrol_conditional_editselectedusers_operation extends enrol_bulk_enrolment
 
         // The enrolment API updates each record, sets modifierid and timemodified and triggers the event.
         foreach ($users as $user) {
-            foreach ($user->enrolments as $enrolment) {
+            foreach ($this->own_enrolments($user) as $enrolment) {
                 $this->plugin->update_user_enrol($enrolment->enrolmentinstance, $user->id, $status, $timestart, $timeend);
             }
         }
@@ -97,6 +104,20 @@ class enrol_conditional_editselectedusers_operation extends enrol_bulk_enrolment
         // Delete cached course contacts for this course because they may be affected.
         cache::make('core', 'coursecontacts')->delete($manager->get_context()->instanceid);
         return true;
+    }
+
+    /**
+     * The enrolments of a selected user that belong to this method.
+     *
+     * @param stdClass $user Selected user with its enrolments.
+     * @return array User enrolments with their enrolmentinstance.
+     */
+    protected function own_enrolments(stdClass $user): array {
+        $name = $this->plugin->get_name();
+        return array_filter(
+            $user->enrolments,
+            fn(stdClass $enrolment): bool => $enrolment->enrolmentinstance->enrol === $name
+        );
     }
 
     /**

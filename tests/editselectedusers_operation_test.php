@@ -128,4 +128,30 @@ final class editselectedusers_operation_test extends \advanced_testcase {
         $this->assertEquals(ENROL_USER_ACTIVE, $record->status);
         $this->assertEquals(200, $record->timeend);
     }
+
+    /**
+     * A selected user also enrolled by another method keeps that enrolment, and the batch goes on.
+     *
+     * Core's participants page keeps the users with at least one enrolment of this method, each carrying all
+     * of their enrolments in the course when the manager is not filtered by instance.
+     */
+    public function test_process_skips_enrolments_of_other_methods(): void {
+        global $DB;
+        $users = $this->enrol_users(2);
+        $both = reset($users);
+        $this->getDataGenerator()->enrol_user($both->id, $this->course->id, null, 'manual');
+        $manual = $DB->get_record('enrol', ['courseid' => $this->course->id, 'enrol' => 'manual'], '*', MUST_EXIST);
+        $selected = $this->manager->get_users_enrolments(array_keys($users));
+        $this->assertCount(2, $selected[$both->id]->enrolments);
+        $properties = (object)['status' => ENROL_USER_SUSPENDED, 'timestart' => 0, 'timeend' => 0];
+
+        $this->assertTrue($this->get_operation()->process($this->manager, $selected, $properties));
+
+        foreach ($users as $user) {
+            $status = $DB->get_field('user_enrolments', 'status', ['enrolid' => $this->instance->id, 'userid' => $user->id]);
+            $this->assertEquals(ENROL_USER_SUSPENDED, $status);
+        }
+        $status = $DB->get_field('user_enrolments', 'status', ['enrolid' => $manual->id, 'userid' => $both->id]);
+        $this->assertEquals(ENROL_USER_ACTIVE, $status);
+    }
 }

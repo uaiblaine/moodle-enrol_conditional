@@ -15,32 +15,29 @@
 // along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
 
 /**
- * Self enrol plugin external functions and service definitions.
+ * Web service functions of the conditional self enrolment plugin.
  *
  * @package   enrol_conditional
  * @copyright 2013 Rajesh Taneja <rajesh@moodle.com>
  * @license   http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
- * @since     Moodle 2.6
  */
 
 defined('MOODLE_INTERNAL') || die();
 
 $functions = [
     'enrol_conditional_get_instance_info' => [
-        'classname'   => 'enrol_conditional_external',
-        'methodname'  => 'get_instance_info',
-        'classpath'   => 'enrol/conditional/externallib.php',
-        'description' => 'self enrolment instance information.',
+        'classname'   => \enrol_conditional\external\get_instance_info::class,
+        'description' => 'Conditional self enrolment instance information.',
         'type'        => 'read',
+        'ajax'        => true,
         'services'    => [MOODLE_OFFICIAL_MOBILE_SERVICE],
     ],
 
     'enrol_conditional_enrol_user' => [
-        'classname'   => 'enrol_conditional_external',
-        'methodname'  => 'enrol_user',
-        'classpath'   => 'enrol/conditional/externallib.php',
-        'description' => 'Self enrol the current user in the given course.',
+        'classname'   => \enrol_conditional\external\enrol_user::class,
+        'description' => 'Self enrol the current user in the given course, if they meet the conditions.',
         'type'        => 'write',
+        'ajax'        => true,
         'services'    => [MOODLE_OFFICIAL_MOBILE_SERVICE],
     ],
 ];

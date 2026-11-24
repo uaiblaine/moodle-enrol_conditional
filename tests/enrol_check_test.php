@@ -16,8 +16,6 @@
 
 namespace enrol_conditional;
 
-use core_external\external_api;
-use enrol_conditional_external;
 use enrol_conditional_plugin;
 use local_enrolconditions\condition\manager;
 
@@ -25,7 +23,6 @@ defined('MOODLE_INTERNAL') || die();
 
 global $CFG;
 require_once($CFG->dirroot . '/enrol/conditional/lib.php');
-require_once($CFG->dirroot . '/enrol/conditional/externallib.php');
 require_once($CFG->dirroot . '/local/enrolconditions/tests/fixtures/fake_condition.php');
 
 /**
@@ -38,8 +35,7 @@ require_once($CFG->dirroot . '/local/enrolconditions/tests/fixtures/fake_conditi
  * @license    https://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 #[\PHPUnit\Framework\Attributes\CoversClass(enrol_conditional_plugin::class)]
-#[\PHPUnit\Framework\Attributes\CoversClass(enrol_conditional_external::class)]
-final class enrol_check_test extends \core_external\tests\externallib_testcase {
+final class enrol_check_test extends \advanced_testcase {
     /** @var enrol_conditional_plugin */
     protected enrol_conditional_plugin $plugin;
 
@@ -82,8 +78,10 @@ final class enrol_check_test extends \core_external\tests\externallib_testcase {
         $id = $this->plugin->add_instance($this->course, [
             'status' => ENROL_INSTANCE_ENABLED,
             'customint6' => 1,
-            'customtext2' => $tree,
         ]);
+        // Stored as given, as a tree saved while its condition types existed: add_instance() would refuse
+        // the unknown types some tests need.
+        $DB->set_field('enrol', 'customtext2', $tree, ['id' => $id]);
         return $DB->get_record('enrol', ['id' => $id], '*', MUST_EXIST);
     }
 
@@ -122,7 +120,8 @@ final class enrol_check_test extends \core_external\tests\externallib_testcase {
         $this->assertIsString($status);
         $this->assertStringContainsString(get_string('conditionsnotmet', 'enrol_conditional'), $status);
         $this->assertStringContainsString('Not a listed user', $status);
-        $this->assertFalse($this->plugin->show_enrolme_link($instance));
+        // The navigation link is decided without the conditions; the page it leads to explains them.
+        $this->assertTrue($this->plugin->show_enrolme_link($instance));
 
         // The page shows the reason instead of the enrol button.
         $html = $this->plugin->enrol_page_hook($instance);
@@ -140,6 +139,56 @@ final class enrol_check_test extends \core_external\tests\externallib_testcase {
             $this->assertSame('conditionsnotmetshort', $e->errorcode);
         }
         $this->assertFalse(is_enrolled(\context_course::instance($this->course->id), $this->refused));
+    }
+
+    public function test_enrol_method_checks_the_key_itself(): void {
+        global $DB;
+        $instance = $this->create_instance(null);
+        $DB->set_field('enrol', 'password', 'rightkey', ['id' => $instance->id]);
+        $instance = $DB->get_record('enrol', ['id' => $instance->id], '*', MUST_EXIST);
+        $this->setUser($this->allowed);
+
+        foreach ([null, '', 'wrongkey'] as $key) {
+            try {
+                $this->plugin->enrol_conditional($instance, $key === null ? (object) [] : (object) ['enrolpassword' => $key]);
+                $this->fail('A missing or wrong key must be refused.');
+            } catch (\moodle_exception $e) {
+                $this->assertSame('passwordinvalid', $e->errorcode);
+            }
+            $this->assertFalse(is_enrolled(\context_course::instance($this->course->id), $this->allowed));
+        }
+
+        $this->plugin->enrol_conditional($instance, (object) ['enrolpassword' => 'rightkey']);
+        $this->assertTrue(is_enrolled(\context_course::instance($this->course->id), $this->allowed));
+    }
+
+    public function test_enrol_method_checks_the_instance_and_the_user(): void {
+        global $DB;
+        $instance = $this->create_instance(null);
+        $context = \context_course::instance($this->course->id);
+
+        $this->setGuestUser();
+        try {
+            $this->plugin->enrol_conditional($instance, (object) []);
+            $this->fail('A guest must be refused.');
+        } catch (\moodle_exception $e) {
+            $this->assertSame('noguestaccess', $e->errorcode);
+        }
+
+        $this->setUser($this->allowed);
+        $DB->set_field('enrol', 'customint6', 0, ['id' => $instance->id]);
+        $closed = $DB->get_record('enrol', ['id' => $instance->id], '*', MUST_EXIST);
+        try {
+            $this->plugin->enrol_conditional($closed, (object) []);
+            $this->fail('An instance closed to new enrolments must refuse.');
+        } catch (\moodle_exception $e) {
+            $this->assertSame('cannotenrolreason', $e->errorcode);
+        }
+        $this->assertFalse(is_enrolled($context, $this->allowed));
+
+        // Control: the same user on the open instance enrols.
+        $this->plugin->enrol_conditional($instance, (object) []);
+        $this->assertTrue(is_enrolled($context, $this->allowed));
     }
 
     public function test_unknown_type_refuses(): void {
@@ -171,31 +220,6 @@ final class enrol_check_test extends \core_external\tests\externallib_testcase {
         $this->assertDebuggingCalled();
         $this->assertIsString($status);
         $this->assertStringContainsString(get_string('failureunknown', 'local_enrolconditions'), $status);
-    }
-
-    public function test_web_service_refuses_with_plain_text(): void {
-        $instance = $this->create_instance($this->allowed_tree());
-        $this->setUser($this->refused);
-
-        $result = enrol_conditional_external::enrol_user($this->course->id, '', $instance->id);
-        $result = external_api::clean_returnvalue(enrol_conditional_external::enrol_user_returns(), $result);
-
-        $this->assertFalse($result['status']);
-        $this->assertCount(1, $result['warnings']);
-        $this->assertStringContainsString('Not a listed user', $result['warnings'][0]['message']);
-        $this->assertStringNotContainsString('<', $result['warnings'][0]['message']);
-        $this->assertFalse(is_enrolled(\context_course::instance($this->course->id), $this->refused));
-    }
-
-    public function test_web_service_enrols_when_met(): void {
-        $instance = $this->create_instance($this->allowed_tree());
-        $this->setUser($this->allowed);
-
-        $result = enrol_conditional_external::enrol_user($this->course->id, '', $instance->id);
-        $result = external_api::clean_returnvalue(enrol_conditional_external::enrol_user_returns(), $result);
-
-        $this->assertTrue($result['status']);
-        $this->assertTrue(is_enrolled(\context_course::instance($this->course->id), $this->allowed));
     }
 
     public function test_enrol_info_status(): void {

@@ -19,8 +19,8 @@ namespace enrol_conditional\event;
 /**
  * A user enrolment suspended by the plugin was reactivated because its conditions are met again.
  *
- * Deprecated since 1.1.0: no longer triggered. \local_enrolconditions\event\user_enrolment_reactivated replaces it;
- * kept so the logs written before still display.
+ * Not triggered by this plugin: the engine triggers \local_enrolconditions\event\user_enrolment_reactivated. The
+ * class stays so that the log entries of this event still display.
  *
  * @property-read array $other {
  *      - int enrolid: enrolment instance id.

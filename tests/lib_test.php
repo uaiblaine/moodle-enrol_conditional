@@ -23,7 +23,7 @@ defined('MOODLE_INTERNAL') || die();
 
 global $CFG;
 require_once($CFG->dirroot . '/enrol/conditional/lib.php');
-require_once($CFG->dirroot . '/enrol/conditional/locallib.php');
+require_once($CFG->dirroot . '/enrol/locallib.php');
 
 /**
  * Self enrolment plugin tests.
@@ -33,6 +33,7 @@ require_once($CFG->dirroot . '/enrol/conditional/locallib.php');
  * @license    http://www.gnu.org/copyleft/gpl.html GNU GPL v3 or later
  */
 #[\PHPUnit\Framework\Attributes\CoversClass(\enrol_conditional_plugin::class)]
+#[\PHPUnit\Framework\Attributes\CoversClass(\enrol_conditional\local\enrolment_key::class)]
 #[\PHPUnit\Framework\Attributes\CoversMethod(\enrol_plugin::class, 'get_welcome_message_contact')]
 final class lib_test extends \advanced_testcase {
     /**
@@ -788,8 +789,11 @@ final class lib_test extends \advanced_testcase {
         require_once("$CFG->dirroot/cohort/lib.php");
         cohort_add_member($cohort1->id, $user1->id);
 
+        // The link is decided without the conditions: both show it, and the enrol page tells them apart.
         $this->assertTrue($selfplugin->show_enrolme_link($instance5));
-        $this->assertFalse($selfplugin->show_enrolme_link($instance6));
+        $this->assertTrue($selfplugin->show_enrolme_link($instance6));
+        $this->assertTrue($selfplugin->can_self_enrol($instance5));
+        $this->assertIsString($selfplugin->can_self_enrol($instance6));
     }
 
     /**
@@ -835,6 +839,96 @@ final class lib_test extends \advanced_testcase {
         $selfplugin->enrol_user($instance1, $user1->id, $studentrole->id);
         $this->setUser($user1);
         $this->assertSame($expectederrorstring, $selfplugin->can_self_enrol($instance1, true));
+    }
+
+    /**
+     * Instance of a new course that is_self_enrol_available() accepts for the current user, to break one fact at a time.
+     *
+     * @return \stdClass Row of the enrol table, enabled, open, taking new enrolments, with no limit.
+     */
+    private function open_instance(): \stdClass {
+        global $DB;
+        $course = $this->getDataGenerator()->create_course();
+        $instance = $DB->get_record('enrol', ['courseid' => $course->id, 'enrol' => 'conditional'], '*', MUST_EXIST);
+        $instance->status = ENROL_INSTANCE_ENABLED;
+        $instance->customint6 = 1;
+        $instance->customint3 = 0;
+        $instance->enrolstartdate = 0;
+        $instance->enrolenddate = 0;
+        $DB->update_record('enrol', $instance);
+        return $instance;
+    }
+
+    /**
+     * Each cause that closes an instance refuses it alone, with its own reason, beside a control that returns true.
+     */
+    public function test_is_self_enrol_available_refuses_each_cause_alone(): void {
+        $this->resetAfterTest();
+        $plugin = enrol_get_plugin('conditional');
+        $user = $this->getDataGenerator()->create_user();
+        $this->setUser($user);
+        $instance = $this->open_instance();
+        $this->assertTrue($plugin->is_self_enrol_available($instance));
+
+        $closed = clone $instance;
+        $closed->status = ENROL_INSTANCE_DISABLED;
+        $this->assertSame(get_string('canntenrol', 'enrol_conditional'), $plugin->is_self_enrol_available($closed));
+
+        $early = clone $instance;
+        $early->enrolstartdate = time() + DAYSECS;
+        $this->assertSame(
+            get_string('canntenrolearly', 'enrol_conditional', userdate($early->enrolstartdate)),
+            $plugin->is_self_enrol_available($early)
+        );
+        $started = clone $instance;
+        $started->enrolstartdate = time() - DAYSECS;
+        $this->assertTrue($plugin->is_self_enrol_available($started));
+
+        $late = clone $instance;
+        $late->enrolenddate = time() - DAYSECS;
+        $this->assertSame(
+            get_string('canntenrollate', 'enrol_conditional', userdate($late->enrolenddate)),
+            $plugin->is_self_enrol_available($late)
+        );
+        $notended = clone $instance;
+        $notended->enrolenddate = time() + DAYSECS;
+        $this->assertTrue($plugin->is_self_enrol_available($notended));
+
+        $off = clone $instance;
+        $off->customint6 = 0;
+        $this->assertSame(get_string('canntenrol', 'enrol_conditional'), $plugin->is_self_enrol_available($off));
+
+        // Already enrolled: only the user's own enrolment closes it, another user's does not.
+        $other = $this->getDataGenerator()->create_user();
+        $plugin->enrol_user($instance, $other->id);
+        $this->assertTrue($plugin->is_self_enrol_available($instance));
+        $plugin->enrol_user($instance, $user->id);
+        $this->assertSame(get_string('canntenrol', 'enrol_conditional'), $plugin->is_self_enrol_available($instance));
+    }
+
+    /**
+     * The limit refuses at the boundary and not before, and only through is_self_enrol_available().
+     */
+    public function test_is_self_enrol_available_limit_boundary(): void {
+        $this->resetAfterTest();
+        $plugin = enrol_get_plugin('conditional');
+        $user = $this->getDataGenerator()->create_user();
+        $this->setUser($user);
+        $instance = $this->open_instance();
+        $instance->customint3 = 2;
+
+        // No enrolment, then one below the limit: still offered.
+        $this->assertTrue($plugin->is_self_enrol_available($instance));
+        $plugin->enrol_user($instance, $this->getDataGenerator()->create_user()->id);
+        $this->assertTrue($plugin->is_self_enrol_available($instance));
+
+        // As many enrolments as the limit: refused with its own reason.
+        $plugin->enrol_user($instance, $this->getDataGenerator()->create_user()->id);
+        $this->assertSame(get_string('maxenrolledreached', 'enrol_conditional'), $plugin->is_self_enrol_available($instance));
+
+        // Control: the same instance without a limit is offered again.
+        $instance->customint3 = 0;
+        $this->assertTrue($plugin->is_self_enrol_available($instance));
     }
 
     /**
@@ -961,8 +1055,9 @@ final class lib_test extends \advanced_testcase {
         $DB->update_record('enrol', $instance);
         $error = get_string('desc', 'enrolcond_cohort', $cohort1->name);
         $this->setUser($user1);
-        $this->assertStringContainsString($error, $selfplugin->is_self_enrol_available($instance));
-        // Guests are refused by can_self_enrol() before the conditions are checked.
+        // The conditions are left to can_self_enrol(): core asks is_self_enrol_available() for guests too.
+        $this->assertTrue($selfplugin->is_self_enrol_available($instance));
+        $this->assertStringContainsString($error, $selfplugin->can_self_enrol($instance));
         $this->setGuestUser();
         $this->assertTrue($selfplugin->is_self_enrol_available($instance));
         $this->setUser($user2);
@@ -1006,9 +1101,9 @@ final class lib_test extends \advanced_testcase {
     }
 
     /**
-     * Test enrol_conditional_check_group_enrolment_key
+     * Test enrolment_key::find_group().
      */
-    public function test_enrol_conditional_check_group_enrolment_key(): void {
+    public function test_find_group_by_enrolment_key(): void {
         global $DB;
         self::resetAfterTest(true);
 
@@ -1018,10 +1113,10 @@ final class lib_test extends \advanced_testcase {
         $group1 = $this->getDataGenerator()->create_group(['courseid' => $course->id]);
         $group2 = $this->getDataGenerator()->create_group(['courseid' => $course->id, 'enrolmentkey' => 'thepassword']);
 
-        $result = enrol_conditional_check_group_enrolment_key($course->id, 'invalidpassword');
+        $result = \enrol_conditional\local\enrolment_key::find_group((int) $course->id, 'invalidpassword') !== null;
         $this->assertFalse($result);
 
-        $result = enrol_conditional_check_group_enrolment_key($course->id, 'thepassword');
+        $result = \enrol_conditional\local\enrolment_key::find_group((int) $course->id, 'thepassword') !== null;
         $this->assertTrue($result);
 
         // Test disabling group options.
@@ -1029,15 +1124,15 @@ final class lib_test extends \advanced_testcase {
         $course->groupmodeforce = 0;
         $DB->update_record('course', $course);
 
-        $result = enrol_conditional_check_group_enrolment_key($course->id, 'invalidpassword');
+        $result = \enrol_conditional\local\enrolment_key::find_group((int) $course->id, 'invalidpassword') !== null;
         $this->assertFalse($result);
 
-        $result = enrol_conditional_check_group_enrolment_key($course->id, 'thepassword');
+        $result = \enrol_conditional\local\enrolment_key::find_group((int) $course->id, 'thepassword') !== null;
         $this->assertTrue($result);
 
         // Test without groups.
         $othercourse = self::getDataGenerator()->create_course();
-        $result = enrol_conditional_check_group_enrolment_key($othercourse->id, 'thepassword');
+        $result = \enrol_conditional\local\enrolment_key::find_group((int) $othercourse->id, 'thepassword') !== null;
         $this->assertFalse($result);
     }
 

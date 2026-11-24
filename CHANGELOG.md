@@ -2,6 +2,49 @@
 
 All notable changes to the Conditional self enrolment plugin will be documented in this file.
 
+## 1.1.1+uai.2 - 2026-11-23
+
+### Security
+- The method implements `\local_enrolconditions\tree_writer`, so a privacy request erases a username from the lists of its instances. It is the one writer of the tree that does not validate, because the caller is the privacy system; it refuses a row that is not an instance of this method.
+- The course upload refuses an enrolment key longer than 50 characters.
+
+### Changed
+- One definition of "needs a key" (`enrolment_key::is_required()`): an instance whose key is `0` now shows the key form, the key icon and the key field in the app information.
+- Requires `local_enrolconditions` 1.2.0+uai.2 (2026112301).
+
+### Fixed
+- Restoring an old backup whose stored tree does not parse keeps the cohort restriction: the tree becomes the cohort condition alone, `customint5` is cleared only once the restriction is in the tree, and the upgrade step 2026110902 now applies the same rule (`cohort_restriction::add_to_tree()`).
+- A key of `0` is a key in the password policy and group-key collision checks of the instance form, when enabling an instance, and in the course upload (`enrolment_key::is_key()`).
+- Without a limit, the enrolment is decided under a core lock of the instance and the user (`capacitybusy` when it is refused), so two simultaneous requests of one user cannot restart the enrolment period.
+- Restoring a backup taken before the cohort restriction became a condition keeps the restriction: `customint5` becomes a cohort condition in the restored tree; restored from another site, it matches nobody.
+- A second request of an already enrolled user no longer restarts the enrolment period: the check is repeated right before the write, under the capacity lock when there is a limit.
+- When the group of a group key is deleted during the enrolment, the user stays enrolled and is told they were not added to a group.
+
+### Added
+- Tests for thirty guards that no test held, a test of the tree writer through the privacy provider of the engine, and a mutation spec (`mutations/`).
+
+## 1.1.1+uai.1 - 2026-11-23
+
+### Changed
+- Course listings and the course navigation decide whether to show the method from the instance alone (status, dates, new enrolments, limit, existing enrolment); the conditions are evaluated on the enrol page, in the key form, in `get_enrol_info()`, in the web services and at the enrolment. A listing with a condition tree costs the same queries as one without. The "Enrol me" link and the listing icon can therefore appear for a user who does not meet the conditions; the enrol page says which are not met.
+- `add_instance()` refuses a condition tree that the edit form would refuse, and `update_instance()` does the same when the tree changes; an unchanged stored tree is not validated again, so the course upload can still update the other fields of an instance whose tree stopped validating. Restore keeps storing the tree after a structure check only: an invalid tree evaluates to unknown and nobody enrols until it is fixed.
+- Restore recreates a suspension record only for an enrolment the restore itself created, and only when the backup comes from the same site, so a merge into an existing course never hands an enrolment a teacher suspended by hand to the engine.
+- With "Max enrolled users" set, the enrolment re-counts the places under a lock per instance; two web nodes can no longer both fill the last place. A lock that is not granted refuses the enrolment (`capacitybusy`).
+- The enrolment itself checks the enrolment key and any group key, with `hash_equals()`, through one helper (`\enrol_conditional\local\enrolment_key`) shared with the key form and the web service; an empty key never matches.
+- The web services moved to `\enrol_conditional\external\get_instance_info` and `\enrol_conditional\external\enrol_user` (same function names, still in the mobile service, now also available to AJAX). `enrol_conditional_get_instance_info` refuses an instance of another method, validates the context of the instance's course category and returns only the declared fields. `externallib.php` and `locallib.php` are removed.
+- The bulk operations *Edit selected user enrolments* and *Delete selected user enrolments* act only on the enrolments of this method, even when a selected user is also enrolled by another one.
+- A stored NULL in the check modes (`customint7`) means "at enrolment only" both in PHP and in the SQL the engine uses; `has_check_mode()` is removed.
+- The holder of the enrolment key is shown through the `enrol_conditional/keyholder` template, which escapes the name.
+- The admin settings *Enrolment expiry action*, *Unenrol inactive after*, *Max enrolled users* and *Send course welcome message* have descriptions of their own instead of their help text.
+- The privacy provider explains which core subsystem and which part of `local_enrolconditions` cover each write.
+
+- The instance form passes the method name and the instance id to the condition editor, and the tree validation passes the course context and the tree stored before it, so on the form, in `add_instance()` and in `update_instance()` a condition that names something the saving user may not reference (a course they cannot see) is refused; a condition already stored unchanged is not asked again.
+- Requires `local_enrolconditions` 1.2.0+uai.1 (2026112300): the events check mode now queues a re-check task per user instead of acting in the request that fired the event.
+
+### Added
+- PHPUnit tests of the reach check on the three save paths (`conditions_reach_test`) and of the queued events re-check; the periodic check tests use `check_periodic()`.
+- PHPUnit tests of the listing cost, the limit under a lock, restore ownership, the validation on every save path (with a test that lists the writers of the condition tree from the source), the bulk operations with users enrolled by several methods, the web services through the web service layer and the privacy provider's compliance.
+
 ## 1.1.1 - 2026-11-19
 
 ### Changed

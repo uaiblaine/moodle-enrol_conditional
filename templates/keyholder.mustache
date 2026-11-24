@@ -1,0 +1,37 @@
+{{!
+    This file is part of Moodle - http://moodle.org/
+
+    Moodle is free software: you can redistribute it and/or modify
+    it under the terms of the GNU General Public License as published by
+    the Free Software Foundation, either version 3 of the License, or
+    (at your option) any later version.
+
+    Moodle is distributed in the hope that it will be useful,
+    but WITHOUT ANY WARRANTY; without even the implied warranty of
+    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+    GNU General Public License for more details.
+
+    You should have received a copy of the GNU General Public License
+    along with Moodle.  If not, see <http://www.gnu.org/licenses/>.
+}}
+{{!
+    @template enrol_conditional/keyholder
+
+    One holder of the enrolment key, shown in the enrolment key form.
+
+    The picture is core's user_picture() output; the name is plain text and is escaped here. The link to the
+    profile is given only when the viewer may open it.
+
+    Context variables required for this template:
+    * picture - HTML of the user picture, built by the server.
+    * fullname - Full name of the key holder, plain text.
+    * profileurl - URL of the profile, or null.
+
+    Example context (json):
+    {
+        "picture": "<img src=\"https://example.com/user.png\" alt=\"\" class=\"userpicture\" width=\"35\" height=\"35\">",
+        "fullname": "Manager One",
+        "profileurl": "https://example.com/user/profile.php?id=3&course=2"
+    }
+}}
+<span class="enrol_conditional-keyholder">{{{picture}}}{{#profileurl}}<a href="{{profileurl}}">{{fullname}}</a>{{/profileurl}}{{^profileurl}}{{fullname}}{{/profileurl}}</span>
