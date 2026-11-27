@@ -2,6 +2,22 @@
 
 All notable changes to the Conditional self enrolment plugin will be documented in this file.
 
+## 1.1.2+uai.1 - 2026-11-27
+
+Synced with upstream `main` at ecefdfa (1.1.2, upstream pull request #20, issue #19). The only change in this fork is the version: 1.1.2 moves the web services into `classes/external`, and this fork had already done that in 1.1.1+uai.1, under the same class names and with checks upstream's move does not carry.
+
+- `\enrol_conditional\external\get_instance_info` and `\enrol_conditional\external\enrol_user` stay as they are here. Upstream's classes are `externallib.php` moved unchanged: they validate the system context, `get_instance_info` accepts the id of another method's instance, and `enrol_user` compares the key with `!==` instead of `\enrol_conditional\local\enrolment_key`. The `requiredparam` fix in upstream's 1.1.2 is covered here by the allowlisted result.
+- Upstream's `tests/external/*_test.php` are its old `externallib_test.php` scenarios, which this fork already runs through the web service layer in `tests/external/upstream_scenarios_test.php`. The last assertion of upstream's `test_enrol_user` checks `$user3`, who was enrolled earlier, instead of `$user4`; the copy here checks `$user4`.
+- Version 2026112700, above upstream's 2026112500; still requires `local_enrolconditions` 2026112301 (the engine's upstream has not moved).
+
+## 1.1.2 - 2026-11-25
+
+### Changed
+- The web service functions `enrol_conditional_get_instance_info` and `enrol_conditional_enrol_user` moved from the legacy `externallib.php` to the classes `\enrol_conditional\external\get_instance_info` and `\enrol_conditional\external\enrol_user` (finding of the Marketplace review, issue #19). The function names, parameters and results do not change, so the Moodle App and other clients keep working. Code that called the class `enrol_conditional_external` directly must use the new classes.
+
+### Fixed
+- `enrol_conditional_get_instance_info` no longer keeps the internal `requiredparam` entry in its result.
+
 ## 1.1.1+uai.2 - 2026-11-23
 
 ### Security
